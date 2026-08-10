@@ -1,0 +1,1 @@
+"""Bitcoin derivatives metric ingestion."""
