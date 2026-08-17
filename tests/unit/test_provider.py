@@ -12,15 +12,11 @@ def test_provider_sends_daily_half_open_request_and_returns_raw_records() -> Non
         captured.append(request)
         return httpx.Response(
             200,
-            json=[
-                [1704067200000, "100", "110", "90", "105", "12.5", 1704153599999]
-            ],
+            json=[[1704067200000, "100", "110", "90", "105", "12.5", 1704153599999]],
         )
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        result = BinanceBitcoinPriceProvider(
-            base_url="https://binance.test", client=client
-        ).fetch(
+        result = BinanceBitcoinPriceProvider(base_url="https://binance.test", client=client).fetch(
             "BTCUSDT",
             datetime(2024, 1, 1, tzinfo=UTC),
             datetime(2024, 1, 2, tzinfo=UTC),

@@ -5,6 +5,7 @@ from investment.crypto.application.ml_paper_job import (
     RunMLPaperJobCommand,
 )
 from investment.crypto.application.ml_service import (
+    ActivateModelCommand,
     CryptoMLService,
     PredictReturnsCommand,
     TrainModelCommand,
@@ -12,8 +13,11 @@ from investment.crypto.application.ml_service import (
 from investment.crypto.domain.market import MarketRegime
 from investment.crypto.ml.dataset import UniverseMode
 from investment.crypto.ml.model import ModelKind
+from investment.crypto.ml.registry import ModelArtifactMetadata
 from investment.crypto.ml.split import PurgedWalkForwardConfig, WalkForwardMode
 from investment.interfaces.api.fastapi.crypto.ml.schemas import (
+    ActivateModelRequest,
+    ActivateModelResponse,
     AssetPredictionResponse,
     ModelMetadataResponse,
     PredictReturnsRequest,
@@ -30,6 +34,23 @@ from investment.interfaces.api.fastapi.dependencies import (
 )
 
 router = APIRouter(prefix="/crypto/ml", tags=["crypto-ml"])
+
+
+def _metadata_response(metadata: ModelArtifactMetadata) -> ModelMetadataResponse:
+    return ModelMetadataResponse(
+        model_id=metadata.model_id,
+        model_kind=metadata.model_kind.value,
+        feature_version=metadata.feature_version,
+        features=metadata.features,
+        label_horizon_days=metadata.label_horizon_days,
+        universe_mode=metadata.universe_mode,
+        dataset_hash=metadata.dataset_hash,
+        trained_start=metadata.trained_start,
+        trained_end=metadata.trained_end,
+        created_at=metadata.created_at,
+        comparison=metadata.comparison,
+        limitations=metadata.limitations,
+    )
 
 
 @router.post("/train", response_model=TrainModelResponse)
@@ -109,21 +130,40 @@ def latest_model(
         metadata = service.latest_model()
     except FileNotFoundError as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
-    return ModelMetadataResponse(
-        **{
-            "model_id": metadata.model_id,
-            "model_kind": metadata.model_kind.value,
-            "feature_version": metadata.feature_version,
-            "features": metadata.features,
-            "label_horizon_days": metadata.label_horizon_days,
-            "universe_mode": metadata.universe_mode,
-            "dataset_hash": metadata.dataset_hash,
-            "trained_start": metadata.trained_start,
-            "trained_end": metadata.trained_end,
-            "created_at": metadata.created_at,
-            "comparison": metadata.comparison,
-            "limitations": metadata.limitations,
-        }
+    return _metadata_response(metadata)
+
+
+@router.get("/models/active", response_model=ModelMetadataResponse)
+def active_model(
+    service: CryptoMLService = Depends(get_crypto_ml_service),
+) -> ModelMetadataResponse:
+    try:
+        return _metadata_response(service.active_model())
+    except FileNotFoundError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+
+
+@router.post("/models/{model_id}/activate", response_model=ActivateModelResponse)
+def activate_model(
+    model_id: str,
+    request: ActivateModelRequest,
+    service: CryptoMLService = Depends(get_crypto_ml_service),
+) -> ActivateModelResponse:
+    try:
+        result = service.activate(ActivateModelCommand(model_id, request.approved_by))
+    except FileNotFoundError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from error
+    activation = result.activation
+    return ActivateModelResponse(
+        model_id=activation.model_id,
+        approved_by=activation.approved_by,
+        activated_at=activation.activated_at,
+        previous_model_id=activation.previous_model_id,
+        policy_version=activation.policy_version,
+        validation_ic=activation.validation_ic,
+        test_ic=activation.test_ic,
     )
 
 

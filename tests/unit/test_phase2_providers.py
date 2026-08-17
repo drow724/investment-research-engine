@@ -26,9 +26,7 @@ def test_etf_http_provider_keeps_vendor_records_raw() -> None:
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = HttpBitcoinEtfFlowProvider(
             "https://vendor.test/flows", "vendor", client=client
-        ).fetch(
-            datetime(2024, 1, 1, tzinfo=UTC), datetime(2024, 1, 3, tzinfo=UTC)
-        )
+        ).fetch(datetime(2024, 1, 1, tzinfo=UTC), datetime(2024, 1, 3, tzinfo=UTC))
     assert result.dataset == "etf"
     assert result.records[0]["fund"] == "IBIT"
 
@@ -38,9 +36,7 @@ def test_binance_derivatives_provider_maps_supported_metrics() -> None:
         if request.url.path.endswith("fundingRate"):
             return httpx.Response(
                 200,
-                json=[
-                    {"fundingTime": 1_704_067_200_000, "fundingRate": "0.001"}
-                ],
+                json=[{"fundingTime": 1_704_067_200_000, "fundingRate": "0.001"}],
             )
         return httpx.Response(
             200,

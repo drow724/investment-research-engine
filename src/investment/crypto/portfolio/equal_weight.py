@@ -34,9 +34,7 @@ class EqualWeightPortfolioConstructor:
         self, portfolio: TradingPortfolio, strategy_result: StrategyResult
     ) -> PortfolioAllocation:
         selected = [
-            signal
-            for signal in strategy_result.signals
-            if signal.direction is SignalDirection.LONG
+            signal for signal in strategy_result.signals if signal.direction is SignalDirection.LONG
         ][: self.maximum_positions]
         if strategy_result.regime is MarketRegime.RISK_OFF or not selected:
             return PortfolioAllocation(portfolio.portfolio_id, portfolio.purpose, (), Decimal("1"))
@@ -45,9 +43,7 @@ class EqualWeightPortfolioConstructor:
             if strategy_result.regime is MarketRegime.RISK_ON
             else self.neutral_invested_fraction
         )
-        invested = min(
-            regime_budget, self.maximum_asset_weight * Decimal(len(selected))
-        )
+        invested = min(regime_budget, self.maximum_asset_weight * Decimal(len(selected)))
         base_weight = invested / Decimal(len(selected))
         allocations = []
         allocated = Decimal("0")

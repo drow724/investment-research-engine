@@ -17,9 +17,7 @@ def test_backtest_does_not_invent_membership_before_first_snapshot() -> None:
     eligibility = PointInTimeLiquidityUniverse(
         UniverseHistory(()), minimum_average_quote_volume=Decimal("0")
     )
-    service = CryptoBacktestService(
-        InMemoryCryptoMarketDataProvider(bundle), eligibility
-    )
+    service = CryptoBacktestService(InMemoryCryptoMarketDataProvider(bundle), eligibility)
     result = service.run_momentum(
         MomentumBacktestCommand(
             ("BTC/KRW", "ETH/KRW", "SOL/KRW"),

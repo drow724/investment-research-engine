@@ -95,9 +95,9 @@ def test_composite_features_propagate_missing_and_calculate_exactly() -> None:
         }
     )
     result = DemandPressureFeature().compute(frame)
-    result = SupplyPressureFeature(
-        ("lth_spending_zscore_30d", "exchange_inflow_zscore")
-    ).compute(result)
+    result = SupplyPressureFeature(("lth_spending_zscore_30d", "exchange_inflow_zscore")).compute(
+        result
+    )
     result = AbsorptionScoreFeature().compute(result)
     assert result[0, "demand_pressure"] == 2.0
     assert result[0, "supply_pressure"] == 1.5

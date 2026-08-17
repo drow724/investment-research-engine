@@ -32,12 +32,8 @@ def _command() -> CreateStrategyExperimentCommand:
         "cross_sectional_momentum",
         dict(PARAMETERS),
         ("BTC/KRW", "ETH/KRW", "SOL/KRW"),
-        ResearchPeriod(
-            datetime(2023, 8, 1, tzinfo=UTC), datetime(2024, 8, 1, tzinfo=UTC)
-        ),
-        ResearchPeriod(
-            datetime(2024, 8, 2, tzinfo=UTC), datetime(2025, 4, 1, tzinfo=UTC)
-        ),
+        ResearchPeriod(datetime(2023, 8, 1, tzinfo=UTC), datetime(2024, 8, 1, tzinfo=UTC)),
+        ResearchPeriod(datetime(2024, 8, 2, tzinfo=UTC), datetime(2025, 4, 1, tzinfo=UTC)),
         ValidationMethod.WALK_FORWARD,
     )
 

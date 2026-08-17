@@ -15,6 +15,7 @@ class BacktestConfig:
     slippage_rate: Decimal = Decimal("0.001")
     portfolio_id: str = "crypto-paper"
     purpose: PortfolioPurpose = PortfolioPurpose.PAPER_TRADING
+    periods_per_year: float = 365.0
 
     def __post_init__(self) -> None:
         if self.start.tzinfo is None or self.end.tzinfo is None:
@@ -25,6 +26,8 @@ class BacktestConfig:
             raise ValueError("capital and rebalance_days must be positive")
         if min(self.fee_rate, self.slippage_rate) < 0:
             raise ValueError("cost rates cannot be negative")
+        if self.periods_per_year <= 0:
+            raise ValueError("periods_per_year must be positive")
         if self.purpose is PortfolioPurpose.CORE_INVESTMENT:
             raise ValueError("core investment capital cannot be backtested by crypto trading")
 

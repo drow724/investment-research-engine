@@ -34,9 +34,7 @@ def test_paper_execution_is_persistent_and_idempotent(tmp_path) -> None:
     approved = DeterministicRiskEngine(
         RiskPolicy(minimum_order_notional=Decimal("5000"))
     ).approve_order(intent, Decimal("50000000"))
-    service = PaperTradingService(
-        PaperExchangeGateway({"BTCKRW": Decimal("50000000")}), repository
-    )
+    service = PaperTradingService(PaperExchangeGateway({"BTCKRW": Decimal("50000000")}), repository)
     report, first_applied = service.execute(approved)
     same_report, second_applied = service.execute(approved)
     snapshot = SqlitePaperPortfolioRepository(tmp_path / "paper.sqlite3").get("paper-1")

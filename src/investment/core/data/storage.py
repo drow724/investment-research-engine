@@ -77,9 +77,7 @@ class RawMetricJsonStorage:
     def save(self, batch: RawMetricBatch) -> Path:
         directory = self.root / "bitcoin" / batch.dataset / batch.source
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / (
-            f"{_timestamp_slug(batch.start)}_{_timestamp_slug(batch.end)}.json"
-        )
+        path = directory / (f"{_timestamp_slug(batch.start)}_{_timestamp_slug(batch.end)}.json")
         payload = {
             "dataset": batch.dataset,
             "source": batch.source,

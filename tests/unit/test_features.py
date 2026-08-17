@@ -15,9 +15,9 @@ from investment.core.feature.pipeline import FeaturePipeline
 
 
 def test_price_features_use_only_historical_rows(btc_dataset: PointInTimeDataset) -> None:
-    result = FeaturePipeline(
-        [ReturnFeature(1), PriceVsMovingAverageFeature(3)]
-    ).compute(btc_dataset)
+    result = FeaturePipeline([ReturnFeature(1), PriceVsMovingAverageFeature(3)]).compute(
+        btc_dataset
+    )
     assert result[1, "return_1d"] == 103 / 101 - 1
     assert result[2, "price_vs_ma_3"] == 102 / np.mean([101, 103, 102]) - 1
 

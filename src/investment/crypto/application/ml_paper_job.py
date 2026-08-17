@@ -48,9 +48,7 @@ class RunMLPaperJobResult:
 
 
 class MLPaperJobService:
-    def __init__(
-        self, ml: CryptoMLService, paper: PaperTradingService
-    ) -> None:
+    def __init__(self, ml: CryptoMLService, paper: PaperTradingService) -> None:
         self._ml = ml
         self._paper = paper
 
@@ -78,8 +76,7 @@ class MLPaperJobService:
             command.maximum_positions, command.minimum_expected_return
         ).generate(
             tuple(
-                RankedReturn(item.asset, item.expected_return)
-                for item in prediction.predictions
+                RankedReturn(item.asset, item.expected_return) for item in prediction.predictions
             ),
             model_id=prediction.model_id,
             as_of=prediction.as_of,

@@ -24,9 +24,7 @@ DISTRIBUTION_RISK = Hypothesis(
     "distribution_risk_score",
 )
 
-HYPOTHESES = {
-    item.name: item for item in (ABSORPTION, WEAK_HAND_CAPITULATION, DISTRIBUTION_RISK)
-}
+HYPOTHESES = {item.name: item for item in (ABSORPTION, WEAK_HAND_CAPITULATION, DISTRIBUTION_RISK)}
 
 
 def weak_hand_capitulation_feature() -> WeightedCompositeFeature:

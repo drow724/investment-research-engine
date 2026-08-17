@@ -21,9 +21,7 @@ def test_paper_gateway_accepts_only_risk_approved_order() -> None:
         datetime(2025, 1, 1, tzinfo=UTC),
         "intent-paper-buy-1",
     )
-    risk = DeterministicRiskEngine(
-        RiskPolicy(minimum_order_notional=Decimal("5000"))
-    )
+    risk = DeterministicRiskEngine(RiskPolicy(minimum_order_notional=Decimal("5000")))
     approved = risk.approve_order(intent, Decimal("50000000"))
     report = PaperExchangeGateway({"BTCKRW": Decimal("50000000")}).submit(approved)
     assert report.status == "FILLED"
@@ -42,6 +40,4 @@ def test_core_investment_order_is_rejected_before_exchange() -> None:
         "intent-core-sell-1",
     )
     with pytest.raises(ValueError, match="core investment"):
-        DeterministicRiskEngine(RiskPolicy()).approve_order(
-            intent, Decimal("50000000")
-        )
+        DeterministicRiskEngine(RiskPolicy()).approve_order(intent, Decimal("50000000"))

@@ -38,9 +38,7 @@ class FakeExperimentService:
         return SimpleNamespace(
             experiment_id="exp-fixture",
             status="COMPLETED",
-            config=SimpleNamespace(
-                hypothesis=kwargs["hypothesis"], features=kwargs["features"]
-            ),
+            config=SimpleNamespace(hypothesis=kwargs["hypothesis"], features=kwargs["features"]),
             results={"forward_return_30d": {"count": 20}},
             stability={"forward_return_30d": {"grouping": "YEAR"}},
             dataset_snapshot=SimpleNamespace(snapshot_id="snapshot-fixture"),
@@ -54,16 +52,25 @@ def test_health_and_openapi_contract() -> None:
     assert response.json() == {
         "status": "UP",
         "service": "investment-research-engine",
-        "version": "0.6.0",
+        "version": "0.16.0",
     }
     schema = client.get("/api/v1/openapi.json").json()
     assert "/api/v1/bitcoin/research/features/evaluate" in schema["paths"]
     assert "/api/v1/bitcoin/research/experiments" in schema["paths"]
     assert "/api/v1/crypto/ml/train" in schema["paths"]
     assert "/api/v1/crypto/ml/predict" in schema["paths"]
+    assert "/api/v1/crypto/ml/models/active" in schema["paths"]
+    assert "/api/v1/crypto/ml/models/{model_id}/activate" in schema["paths"]
     assert "/api/v1/crypto/ml/paper/jobs/run" in schema["paths"]
     assert "/api/v1/crypto/research/experiments" in schema["paths"]
     assert "/api/v1/crypto/research/experiments/{experiment_id}/promote" in schema["paths"]
+    assert "/api/v1/runtime/status" in schema["paths"]
+    assert "/api/v1/jobs" in schema["paths"]
+    assert "/api/v1/crypto/market/data/intraday/sync" in schema["paths"]
+    assert "/api/v1/crypto/backtests/intraday" in schema["paths"]
+    assert "/api/v1/crypto/paper/portfolios/dynamic-rebalance" in schema["paths"]
+    assert "/api/v1/crypto/paper/portfolios/{portfolio_id}/executions" in schema["paths"]
+    assert "/api/v1/crypto/paper/portfolios/{portfolio_id}/rebalance-decisions" in schema["paths"]
 
 
 def test_bitcoin_endpoint_contracts() -> None:

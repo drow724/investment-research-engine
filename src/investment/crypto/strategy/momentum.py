@@ -13,6 +13,7 @@ class CrossSectionalMomentumStrategy:
     lookback_days: int = 30
     maximum_assets: int = 3
     minimum_average_quote_volume: Decimal = Decimal("0")
+    lookback_unit: str = "d"
 
     def __post_init__(self) -> None:
         if self.lookback_days <= 0 or self.maximum_assets <= 0:
@@ -34,10 +35,7 @@ class CrossSectionalMomentumStrategy:
             return StrategyResult(self.name, self.version, context.as_of, context.regime.regime, ())
         candidates: list[tuple[Decimal, Asset]] = []
         for pair in known.universe.pairs:
-            if (
-                context.eligible_assets is not None
-                and pair.base not in context.eligible_assets
-            ):
+            if context.eligible_assets is not None and pair.base not in context.eligible_assets:
                 continue
             candles = known.candles[pair.symbol]
             if len(candles) < self.lookback_days + 1:
@@ -61,7 +59,9 @@ class CrossSectionalMomentumStrategy:
                 direction=SignalDirection.LONG,
                 strength=min(score / maximum, Decimal("1")) if maximum else Decimal("0"),
                 as_of=context.as_of,
-                reason=f"positive_{self.lookback_days}d_cross_sectional_momentum",
+                reason=(
+                    f"positive_{self.lookback_days}{self.lookback_unit}_cross_sectional_momentum"
+                ),
             )
             for score, asset in ranked
         )

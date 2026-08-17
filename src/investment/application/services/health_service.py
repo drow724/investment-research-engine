@@ -14,6 +14,4 @@ class HealthStatus:
 
 class HealthService:
     def check(self) -> HealthStatus:
-        return HealthStatus(
-            status="UP", service="investment-research-engine", version=__version__
-        )
+        return HealthStatus(status="UP", service="investment-research-engine", version=__version__)

@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -25,3 +26,7 @@ class ExecutionReport:
 
 class ExchangeGateway(Protocol):
     def submit(self, order: ApprovedOrder) -> ExecutionReport: ...
+
+
+class PaperExchangeGatewayFactory(Protocol):
+    def create(self, prices: Mapping[str, Decimal]) -> ExchangeGateway: ...

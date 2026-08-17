@@ -4,16 +4,51 @@ from investment.crypto.application.backtest_service import (
     CryptoBacktestService,
     MomentumBacktestCommand,
 )
+from investment.crypto.application.intraday_service import (
+    CryptoIntradayBacktestService,
+    IntradayBacktestCommand,
+)
+from investment.crypto.backtest.models import BacktestResult
 from investment.crypto.domain.portfolio import PortfolioPurpose
 from investment.interfaces.api.fastapi.crypto.backtest.schemas import (
     EquityPointResponse,
+    IntradayBacktestRequest,
     MomentumBacktestRequest,
     MomentumBacktestResponse,
     PerformanceMetricsResponse,
 )
-from investment.interfaces.api.fastapi.dependencies import get_crypto_backtest_service
+from investment.interfaces.api.fastapi.dependencies import (
+    get_crypto_backtest_service,
+    get_crypto_intraday_backtest_service,
+)
 
 router = APIRouter(prefix="/crypto/backtests", tags=["crypto-backtests"])
+
+
+@router.post("/intraday", response_model=MomentumBacktestResponse)
+def run_intraday_backtest(
+    request: IntradayBacktestRequest,
+    service: CryptoIntradayBacktestService = Depends(get_crypto_intraday_backtest_service),
+) -> MomentumBacktestResponse:
+    try:
+        result = service.run(
+            IntradayBacktestCommand(
+                request.pairs,
+                request.start,
+                request.end,
+                request.initial_capital,
+                request.signal_lookback_bars,
+                request.rebalance_bars,
+                request.maximum_positions,
+                request.fee_rate,
+                request.slippage_rate,
+            )
+        )
+    except FileNotFoundError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "15m data is unavailable") from error
+    except ValueError as error:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from error
+    return _response(result)
 
 
 @router.post("", response_model=MomentumBacktestResponse)
@@ -46,6 +81,10 @@ def run_momentum_backtest(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
         ) from error
+    return _response(result)
+
+
+def _response(result: BacktestResult) -> MomentumBacktestResponse:
     return MomentumBacktestResponse(
         strategy=result.strategy_name,
         strategy_version=result.strategy_version,
@@ -53,9 +92,7 @@ def run_momentum_backtest(
         portfolio_purpose=result.purpose.value,
         start=result.start,
         end=result.end,
-        metrics=PerformanceMetricsResponse.model_validate(
-            result.metrics, from_attributes=True
-        ),
+        metrics=PerformanceMetricsResponse.model_validate(result.metrics, from_attributes=True),
         equity_curve=tuple(
             EquityPointResponse.model_validate(point, from_attributes=True)
             for point in result.equity_curve

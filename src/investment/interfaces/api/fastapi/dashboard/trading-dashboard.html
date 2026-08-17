@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Investment Engine · Trading Status</title>
+  <style>
+    :root { --bg:#091019; --panel:#111c29; --line:#263548; --text:#edf4fb; --muted:#90a2b7;
+      --green:#35d49a; --amber:#ffbf69; --red:#ff6b78; --blue:#65a8ff; --ink:#07131d; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--text); background:radial-gradient(circle at 80% -20%,#183a4d 0,transparent 38%),var(--bg);
+      font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Noto Sans KR",sans-serif; }
+    .shell { width:min(1440px,calc(100% - 32px)); margin:auto; padding:28px 0 48px; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; margin-bottom:22px; }
+    h1 { margin:0; font-size:clamp(24px,4vw,38px); letter-spacing:-.04em; }
+    h2 { margin:0 0 15px; font-size:17px; letter-spacing:-.02em; }
+    p { margin:5px 0; } .muted { color:var(--muted); } .tiny { font-size:12px; }
+    .badge { display:inline-flex; align-items:center; gap:7px; padding:7px 11px; border:1px solid var(--line);
+      border-radius:999px; background:#0d1721; font-weight:700; white-space:nowrap; }
+    .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); box-shadow:0 0 12px currentColor; }
+    .ok .dot,.status-COMPLETED .dot,.status-IDLE .dot,.status-ACTIVE .dot { background:var(--green); }
+    .status-RUNNING .dot,.status-STARTING .dot { background:var(--blue); }
+    .status-DEGRADED .dot,.status-SKIPPED .dot,.status-CANDIDATE .dot { background:var(--amber); }
+    .status-ERROR .dot,.status-FAILED .dot,.status-REJECTED .dot { background:var(--red); }
+    button,input { font:inherit; } button { color:var(--text); border:1px solid var(--line); background:#172536;
+      padding:9px 13px; border-radius:9px; cursor:pointer; } button:hover { border-color:var(--blue); }
+    button:disabled { opacity:.45; cursor:wait; } .primary { color:var(--ink); background:var(--green); border:0; font-weight:800; }
+    .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:14px; }
+    .card { background:linear-gradient(145deg,rgba(21,34,49,.96),rgba(13,24,35,.96)); border:1px solid var(--line);
+      border-radius:15px; padding:18px; box-shadow:0 16px 40px rgba(0,0,0,.15); min-width:0; }
+    .span-3 { grid-column:span 3; } .span-4 { grid-column:span 4; } .span-5 { grid-column:span 5; }
+    .span-7 { grid-column:span 7; } .span-8 { grid-column:span 8; } .span-12 { grid-column:span 12; }
+    .metric { font-size:28px; font-weight:800; letter-spacing:-.04em; margin:4px 0; overflow-wrap:anywhere; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .stack { display:flex; flex-direction:column; gap:10px; }
+    .list { display:flex; flex-direction:column; gap:8px; max-height:340px; overflow:auto; }
+    .item { padding:11px 12px; border:1px solid var(--line); background:rgba(5,14,22,.4); border-radius:10px; }
+    .item strong { overflow-wrap:anywhere; } .kv { display:grid; grid-template-columns:120px 1fr; gap:7px; }
+    .table-wrap { overflow:auto; } table { width:100%; border-collapse:collapse; min-width:620px; }
+    th,td { text-align:left; padding:10px 9px; border-bottom:1px solid var(--line); }
+    th { color:var(--muted); font-size:12px; font-weight:600; } td { vertical-align:top; }
+    .warning { border-color:#74592f; background:#251f17; color:#ffd99b; }
+    .danger { border-color:#71353c; background:#28191d; color:#ffc1c7; }
+    .progress { height:8px; border-radius:8px; background:#253345; overflow:hidden; margin-top:8px; }
+    .progress > i { display:block; height:100%; background:linear-gradient(90deg,var(--green),var(--blue)); }
+    input { min-width:0; width:100%; color:var(--text); border:1px solid var(--line); background:#09131e;
+      padding:10px 11px; border-radius:9px; outline:none; } input:focus { border-color:var(--blue); }
+    .controls { display:flex; gap:8px; } .empty { color:var(--muted); padding:18px 4px; text-align:center; }
+    .toast { position:fixed; right:20px; bottom:20px; max-width:380px; padding:12px 15px; border-radius:10px;
+      background:#1b2a3c; border:1px solid var(--line); display:none; z-index:10; }
+    @media (max-width:1000px) { .span-3,.span-4 { grid-column:span 6; } .span-5,.span-7,.span-8 { grid-column:span 12; } }
+    @media (max-width:620px) { .shell { width:min(100% - 20px,1440px); padding-top:18px; } header { flex-direction:column; }
+      .span-3,.span-4 { grid-column:span 12; } .controls { width:100%; } .kv { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header>
+    <div><p class="muted">AUTONOMOUS RESEARCH / PAPER TRADING</p><h1>Trading Status</h1>
+      <p class="muted">실거래 주문은 전송되지 않습니다. 자동 체결은 로컬 Paper 원장에만 반영됩니다.</p></div>
+    <div class="controls"><a href="/diagnostics"><button>v2 진단 화면</button></a><button id="refresh">새로고침</button><span id="clock" class="badge"></span></div>
+  </header>
+
+  <section class="grid">
+    <article class="card span-3"><div class="row"><span class="muted">엔진 상태</span><span id="engineBadge" class="badge"><i class="dot"></i>확인 중</span></div>
+      <div id="engineLabel" class="metric">—</div><p id="engineDetail" class="muted tiny">상태를 불러오는 중입니다.</p></article>
+    <article class="card span-3"><span class="muted">현재 작업</span><div id="currentJob" class="metric">없음</div><p id="currentJobTime" class="muted tiny">정상 대기</p></article>
+    <article class="card span-3"><span class="muted">마지막 성공</span><div id="lastSuccess" class="metric">—</div><p id="lastSuccessTime" class="muted tiny">실행 이력 없음</p></article>
+    <article class="card span-3"><span class="muted">마지막 실패</span><div id="lastFailure" class="metric">—</div><p id="lastFailureTime" class="muted tiny">실패 이력 없음</p></article>
+
+    <article class="card span-12"><div class="row"><h2>최근 시장 가격</h2><span class="muted tiny">저장된 완료 일봉 기준 · 실시간 체결가 아님</span></div>
+      <div id="prices" class="grid"><div class="empty span-12">가격 데이터 조회 중</div></div></article>
+
+    <article class="card span-7"><div class="row"><h2>최근 자동 실행</h2><span class="muted tiny">30초마다 갱신</span></div>
+      <div class="table-wrap"><table><thead><tr><th>작업</th><th>상태</th><th>시작</th><th>소요시간</th><th>메시지</th></tr></thead><tbody id="jobs"></tbody></table></div></article>
+    <article class="card span-5"><h2>자동화 준비 상태</h2><div id="readiness" class="stack"></div>
+      <div class="item warning tiny"><strong>안전 모드</strong><br>ML Paper 작업은 dry-run만 허용됩니다. Upbit API Key와 실주문 기능은 연결되어 있지 않습니다.</div></article>
+
+    <article class="card span-4"><h2>시장 데이터</h2><div id="universe" class="stack"><div class="empty">조회 중</div></div></article>
+    <article class="card span-4"><h2>활성 전략과 실험</h2><div id="research" class="stack"><div class="empty">조회 중</div></div></article>
+    <article class="card span-4"><h2>최근 학습 모델</h2><div id="model" class="stack"><div class="empty">조회 중</div></div></article>
+
+    <article class="card span-5"><div class="row"><h2>Paper 포트폴리오</h2><span id="paperMode" class="badge"><i class="dot"></i>확인 중</span></div>
+      <div class="controls"><input id="portfolioId" value="paper-main" aria-label="Portfolio ID"><button id="loadPortfolio">조회</button><button id="planRebalance" class="primary">종목 자동선정</button></div>
+      <div id="portfolio" class="stack" style="margin-top:12px"><div class="empty">Portfolio ID를 입력해 조회하세요.</div></div></article>
+    <article class="card span-12"><div class="row"><h2>Dynamic Universe 리밸런싱 제안</h2><span class="badge status-SKIPPED"><i class="dot"></i>기본 DRY-RUN</span></div>
+      <p class="muted tiny">전체 KRW Universe 중 주의 종목과 데이터 부족 종목을 제외하고, 거래대금 상위 후보에서 intraday 점수가 수수료·슬리피지 왕복 비용 0.20%를 넘는 종목만 선택합니다.</p>
+      <div id="rebalancePlan" class="stack" style="margin-top:12px"><div class="empty">‘종목 자동선정’을 눌러 편입·제외 이유와 주문 계획을 확인하세요.</div></div></article>
+    <article class="card span-12"><div class="row"><h2>Paper 리밸런싱·체결 이력</h2><span class="muted tiny">최근 100건 · 30초마다 갱신</span></div>
+      <div id="executionSummary" class="grid" style="margin-bottom:12px"></div>
+      <div class="table-wrap"><table><thead><tr><th>체결 시각</th><th>구분</th><th>종목</th><th>수량</th><th>체결가</th><th>거래금액</th><th>수수료</th><th>실현손익</th></tr></thead><tbody id="paperExecutions"><tr><td colspan="8" class="empty">체결 이력을 조회하는 중입니다.</td></tr></tbody></table></div></article>
+    <article class="card span-12"><div class="row"><h2>전략 판단 감사 로그</h2><span class="muted tiny">전략 버전·선정 이유·위험 예산</span></div>
+      <div id="decisionAudit" class="stack"><div class="empty">다음 리밸런싱부터 판단 근거가 기록됩니다.</div></div></article>
+    <article class="card span-7"><h2>운영 작업 수동 실행</h2><p class="muted tiny">개발·복구용입니다. 정상 운영은 Python 내부 Scheduler가 담당합니다.</p>
+      <div class="stack" style="margin-top:12px">
+        <div class="item row"><div><strong>Heartbeat</strong><div class="muted tiny">현재 상태를 Spring으로 보고</div></div><button data-job="runtime_heartbeat">실행</button></div>
+        <div class="item row"><div><strong>Universe Snapshot</strong><div class="muted tiny">현재 Upbit KRW 종목 구성 저장</div></div><button data-job="crypto_universe_snapshot">실행</button></div>
+        <div class="item row"><div><strong>Market Sync</strong><div class="muted tiny">설정된 종목의 최근 일봉 동기화</div></div><button data-job="crypto_market_sync">실행</button></div>
+        <div class="item row"><div><strong>15m Market Sync</strong><div class="muted tiny">15분봉 종료 후 intraday 데이터 동기화</div></div><button data-job="crypto_intraday_15m_sync">실행</button></div>
+        <div class="item row warning"><div><strong>Paper 자동 리밸런싱</strong><div class="tiny">실행하면 로컬 Paper 잔고와 포지션이 즉시 변경됩니다.</div></div><button data-job="crypto_dynamic_paper_rebalance" data-confirm="Paper 리밸런싱을 지금 실행할까요?">지금 실행</button></div>
+      </div></article>
+  </section>
+</main>
+<div id="toast" class="toast"></div>
+<script>
+  const dashboardConfig = __DASHBOARD_CONFIG__;
+  const $ = id => document.getElementById(id);
+  const fmtTime = v => v ? new Intl.DateTimeFormat('ko-KR',{dateStyle:'short',timeStyle:'medium'}).format(new Date(v)) : '—';
+  const elapsed = (a,b) => { if(!a) return '—'; const s=Math.max(0,(new Date(b||Date.now())-new Date(a))/1000); return s<60?`${s.toFixed(1)}초`:`${Math.floor(s/60)}분 ${Math.floor(s%60)}초`; };
+  const api = async path => { const r=await fetch(path,{headers:{Accept:'application/json'}}); if(!r.ok) throw new Error(`${r.status} ${await r.text()}`); return r.json(); };
+  const safe = v => String(v ?? '').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  const badge = status => `<span class="badge status-${safe(status)}"><i class="dot"></i>${safe(status)}</span>`;
+  const toast = (message,error=false) => { const el=$('toast'); el.textContent=message; el.style.display='block'; el.className=`toast ${error?'danger':''}`; setTimeout(()=>el.style.display='none',3500); };
+
+  async function refreshRuntime(){
+    const [state,jobs]=await Promise.all([api('/api/v1/runtime/status'),api('/api/v1/jobs?limit=30')]);
+    $('engineBadge').className=`badge status-${state.status}`; $('engineBadge').innerHTML=`<i class="dot"></i>${safe(state.status)}`;
+    const labels={IDLE:'정상 대기',RUNNING:'작업 진행 중',DEGRADED:'일부 기능 저하',ERROR:'엔진 오류',STARTING:'시작 중',STOPPED:'중지됨'};
+    $('engineLabel').textContent=labels[state.status]||state.status; $('engineDetail').textContent=`${state.instanceId} · v${state.version} · 보고 ${fmtTime(state.reportedAt)}`;
+    const running=jobs.find(j=>j.status==='RUNNING'); const success=jobs.find(j=>j.status==='COMPLETED'); const failed=jobs.find(j=>j.status==='FAILED');
+    $('currentJob').textContent=running?running.jobName:'없음'; $('currentJobTime').textContent=running?`${fmtTime(running.startedAt)} 시작`:'정상 대기 중';
+    $('lastSuccess').textContent=success?success.jobName:'—'; $('lastSuccessTime').textContent=success?fmtTime(success.finishedAt):'실행 이력 없음';
+    $('lastFailure').textContent=failed?failed.jobName:'—'; $('lastFailureTime').textContent=failed?`${fmtTime(failed.finishedAt)} · ${failed.error?.code||''}`:'실패 이력 없음';
+    $('jobs').innerHTML=jobs.length?jobs.map(j=>`<tr><td><strong>${safe(j.jobName)}</strong><br><span class="muted tiny">${safe(j.executionId)}</span></td><td>${badge(j.status)}</td><td>${fmtTime(j.startedAt||j.scheduledAt)}</td><td>${elapsed(j.startedAt,j.finishedAt)}</td><td>${safe(j.error?.message||'—')}</td></tr>`).join(''):'<tr><td colspan="5" class="empty">아직 실행 이력이 없습니다.</td></tr>';
+    renderReadiness(state,jobs);
+  }
+  function renderReadiness(state,jobs){
+    const checks=[['Python 자율 실행',state.status!=='STOPPED'],['Heartbeat 상태 보고',jobs.some(j=>j.jobName==='runtime_heartbeat'&&j.status==='COMPLETED')],['일봉 자동 수집',jobs.some(j=>j.jobName==='crypto_market_sync'&&j.status==='COMPLETED')],['15분봉 자동 수집',jobs.some(j=>j.jobName==='crypto_intraday_15m_sync'&&j.status==='COMPLETED')],['Paper 자동 체결',dashboardConfig.paperExecutionEnabled],['실거래 주문','disabled']];
+    $('readiness').innerHTML=checks.map(([name,ok])=>{const value=ok==='disabled'?'의도적으로 차단':ok?'준비됨':'확인 필요'; const width=ok===true?100:ok==='disabled'?35:55; return `<div class="item"><div class="row"><strong>${name}</strong><span class="${ok===true?'':'muted'}">${value}</span></div><div class="progress"><i style="width:${width}%"></i></div></div>`}).join('');
+  }
+  let latestPrices={};
+  async function refreshPrices(){try{const m=await api('/api/v1/crypto/market/latest'); latestPrices=Object.fromEntries(m.prices.map(x=>[x.pair.replace('KRW',''),Number(x.close)])); $('prices').innerHTML=m.prices.length?m.prices.map(x=>{const change=x.dailyChange; const color=change==null?'var(--muted)':change>=0?'var(--green)':'var(--red)'; return `<div class="item span-4"><div class="row"><strong>${safe(x.pair)}</strong><span style="color:${color}">${change==null?'—':`${change>=0?'+':''}${(change*100).toFixed(2)}%`}</span></div><div class="metric">₩${Number(x.close).toLocaleString('ko-KR')}</div><div class="muted tiny">기준 ${fmtTime(x.asOf)}</div></div>`}).join(''):'<div class="empty span-12">완료된 가격 데이터가 없습니다.</div>';}catch(e){$('prices').innerHTML='<div class="item warning span-12">가격 데이터가 없습니다. Market Sync를 먼저 실행하세요.</div>';}}
+  async function refreshUniverse(){ try{const u=await api('/api/v1/crypto/market/universe'); const warnings=u.members.filter(m=>m.warning).length; $('universe').innerHTML=`<div class="kv"><span class="muted">관측 시각</span><strong>${fmtTime(u.observedAt)}</strong><span class="muted">전체 마켓</span><strong>${u.members.length}개</strong><span class="muted">주의 마켓</span><strong>${warnings}개</strong><span class="muted">데이터 출처</span><strong>${safe(u.source)}</strong></div><div class="item tiny">${u.members.slice(0,12).map(m=>safe(m.pair)+(m.warning?' ⚠':'')).join(' · ')}${u.members.length>12?' …':''}</div>`;}catch(e){$('universe').innerHTML='<div class="item warning">아직 Universe Snapshot이 없습니다. 자동 작업 또는 수동 실행으로 수집하세요.</div>';}}
+  async function refreshResearch(){ try{const [strategies,experiments]=await Promise.all([api('/api/v1/crypto/research/strategies'),api('/api/v1/crypto/research/experiments')]); const active=strategies.find(s=>s.status==='ACTIVE'); const candidate=strategies.find(s=>s.status==='CANDIDATE'); const last=[...experiments].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0]; $('research').innerHTML=`<div class="kv"><span class="muted">Active</span><strong>${safe(active?.versionId||'없음')}</strong><span class="muted">Candidate</span><strong>${safe(candidate?.versionId||'없음')}</strong><span class="muted">최근 실험</span><strong>${safe(last?.status||'없음')}</strong></div>${last?`<div class="item tiny">${safe(last.hypothesis)}</div>`:''}`;}catch(e){$('research').innerHTML='<div class="item warning">전략 Registry를 확인할 수 없습니다.</div>';}}
+  async function refreshModel(){ try{const m=await api('/api/v1/crypto/ml/models/latest'); $('model').innerHTML=`<div class="kv"><span class="muted">최근 학습</span><strong>${safe(m.modelId)}</strong><span class="muted">알고리즘</span><strong>${safe(m.modelKind)}</strong><span class="muted">학습 종료</span><strong>${fmtTime(m.trainedEnd)}</strong><span class="muted">예측 기간</span><strong>${m.labelHorizonDays}일</strong></div><div class="item warning tiny">최근 학습 모델이며 Active 승인 모델과 같다는 의미는 아닙니다.</div>`;}catch(e){$('model').innerHTML='<div class="item warning">아직 등록된 학습 모델이 없습니다.</div>';}}
+  async function loadPortfolio(){const id=$('portfolioId').value.trim(); if(!id)return; localStorage.setItem('paperPortfolioId',id); try{const p=await api(`/api/v1/crypto/paper/portfolios/${encodeURIComponent(id)}`); let priced=0; const rows=p.positions.map(x=>{const market=latestPrices[x.asset]; const reference=market||Number(x.averageCost); if(market)priced++; const value=Number(x.quantity)*reference; const pnl=market?(market/Number(x.averageCost)-1):null; return {...x,market,value,pnl};}); const positionValue=rows.reduce((sum,x)=>sum+x.value,0); const equity=Number(p.cashBalance)+positionValue; const cashWeight=equity?Number(p.cashBalance)/equity:1; $('portfolio').innerHTML=`<div class="grid"><div class="item span-4"><span class="muted">총 평가액</span><div class="metric">₩${Math.round(equity).toLocaleString('ko-KR')}</div></div><div class="item span-4"><span class="muted">가상 현금</span><div class="metric">₩${Number(p.cashBalance).toLocaleString('ko-KR')}</div></div><div class="item span-4"><span class="muted">현금 비중</span><div class="metric">${(cashWeight*100).toFixed(1)}%</div></div></div><div class="kv"><span class="muted">Portfolio ID</span><strong>${safe(p.portfolioId)}</strong><span class="muted">목적</span><strong>${safe(p.purpose)}</strong><span class="muted">보유 종목</span><strong>${p.positions.length}개</strong><span class="muted">마지막 원장 갱신</span><strong>${fmtTime(p.updatedAt)}</strong><span class="muted">자동 실행</span><strong>${dashboardConfig.paperExecutionEnabled?`활성 · ${safe(dashboardConfig.paperRebalanceCron)}`:'비활성'}</strong></div><div class="list">${rows.map(x=>`<div class="item"><div class="row"><strong>${safe(x.asset)}</strong><strong>₩${Math.round(x.value).toLocaleString('ko-KR')}</strong></div><div class="row tiny muted"><span>${safe(x.quantity)}개 · 평균 ₩${Number(x.averageCost).toLocaleString('ko-KR')}</span><span>${x.pnl==null?'현재가 없음':`${x.pnl>=0?'+':''}${(x.pnl*100).toFixed(2)}%`}</span></div></div>`).join('')||'<div class="empty">아직 보유 포지션이 없습니다. 조건을 통과한 종목이 생기면 자동 리밸런싱에 반영됩니다.</div>'}</div><div class="muted tiny">${p.positions.length===priced?'저장된 최근 완료 일봉으로 평가했습니다.':'현재가가 없는 종목은 평균 매입가로 임시 평가했습니다.'}</div>`;}catch(e){$('portfolio').innerHTML=`<div class="item warning">${safe(id)} Paper 포트폴리오를 불러오지 못했습니다: ${safe(e.message)}</div>`;}}
+  async function loadExecutions(){const id=$('portfolioId').value.trim(); if(!id)return; try{const rows=await api(`/api/v1/crypto/paper/portfolios/${encodeURIComponent(id)}/executions?limit=100`); const fees=rows.reduce((s,x)=>s+Number(x.fee),0); const realized=rows.reduce((s,x)=>s+Number(x.realizedPnl),0); const buys=rows.filter(x=>x.side==='BUY').length; const sells=rows.filter(x=>x.side==='SELL').length; $('executionSummary').innerHTML=`<div class="item span-3"><span class="muted">전체 체결</span><div class="metric">${rows.length}</div></div><div class="item span-3"><span class="muted">매수 / 매도</span><div class="metric">${buys} / ${sells}</div></div><div class="item span-3"><span class="muted">누적 수수료</span><div class="metric">₩${fees.toLocaleString('ko-KR',{maximumFractionDigits:2})}</div></div><div class="item span-3"><span class="muted">실현손익</span><div class="metric" style="color:${realized>=0?'var(--green)':'var(--red)'}">${realized>=0?'+':''}₩${realized.toLocaleString('ko-KR',{maximumFractionDigits:0})}</div></div>`; $('paperExecutions').innerHTML=rows.length?rows.map(x=>{const pnl=Number(x.realizedPnl); return `<tr><td>${fmtTime(x.executedAt)}</td><td>${badge(x.side)}</td><td><strong>${safe(x.pair)}</strong></td><td>${Number(x.quantity).toLocaleString('ko-KR',{maximumFractionDigits:8})}</td><td>₩${Number(x.price).toLocaleString('ko-KR')}</td><td>₩${Number(x.notional).toLocaleString('ko-KR',{maximumFractionDigits:0})}</td><td>₩${Number(x.fee).toLocaleString('ko-KR',{maximumFractionDigits:2})}</td><td style="color:${pnl>=0?'var(--green)':'var(--red)'}">${pnl>=0?'+':''}₩${pnl.toLocaleString('ko-KR',{maximumFractionDigits:0})}</td></tr>`}).join(''):'<tr><td colspan="8" class="empty">아직 Paper 체결 이력이 없습니다.</td></tr>';}catch(e){$('paperExecutions').innerHTML=`<tr><td colspan="8" class="warning">${safe(e.message)}</td></tr>`;}}
+  const decisionReasonLabels={ORDERS_CREATED_FOR_TARGET_WEIGHT_CHANGES:'목표 비중 차이로 주문 생성',NEW_BUYS_BLOCKED_BY_DAILY_RISK_BUDGET:'일일 회전율·수수료·손실 한도로 신규 매수 차단',HELD_ASSETS_REMAIN_WITHIN_EXIT_HYSTERESIS:'보유 종목이 청산 기준에 해당하지 않아 유지',TARGET_WEIGHT_CHANGES_BELOW_REBALANCE_THRESHOLD:'목표 비중 차이가 최소 리밸런싱 기준 미만',NEW_ENTRY_WAITING_FOR_SECOND_CONFIRMATION:'신규 진입 신호의 두 번째 연속 확인 대기',NEW_ENTRY_BLOCKED_BY_REENTRY_COOLDOWN:'최근 매도한 종목의 1시간 재진입 대기',REPLACEMENT_SCORE_ADVANTAGE_INSUFFICIENT:'신규 종목의 점수 우위가 교체 기준보다 작음',NO_ASSET_PASSED_ENTRY_OR_HOLD_RULES:'진입 또는 보유 유지 기준을 통과한 종목 없음',NO_ACTION_REQUIRED:'포트폴리오 변경 필요 없음'};
+  const decisionReasons=x=>(x.decisionReasons||[]).map(v=>decisionReasonLabels[v]||v);
+  async function loadDecisions(){const id=$('portfolioId').value.trim(); if(!id)return; try{const rows=await api(`/api/v1/crypto/paper/portfolios/${encodeURIComponent(id)}/rebalance-decisions?limit=10`); $('decisionAudit').innerHTML=rows.length?rows.map(x=>`<div class="item"><div class="row"><strong>${fmtTime(x.asOf)} · ${safe(x.strategyVersion)}</strong>${badge(x.status)}</div><div class="kv tiny" style="margin-top:8px"><span class="muted">평가자산</span><strong>${x.assessments.length}개</strong><span class="muted">선정</span><strong>${x.selected.map(v=>`${safe(v.pair)} (${safe(v.reason)})`).join(' · ')||'현금 유지'}</strong><span class="muted">주문</span><strong>${x.orders.length}건</strong><span class="muted">거래 체결/미체결 이유</span><strong>${decisionReasons(x).map(safe).join(' · ')||'이 필드 도입 전 기록'}</strong><span class="muted">위험 제한</span><strong style="color:${x.riskViolations.length?'var(--red)':'var(--green)'}">${x.riskViolations.map(safe).join(' · ')||'없음'}</strong></div></div>`).join(''):'<div class="empty">다음 리밸런싱부터 판단 근거가 기록됩니다.</div>';}catch(e){$('decisionAudit').innerHTML=`<div class="item warning">${safe(e.message)}</div>`;}}
+  async function planRebalance(){const b=$('planRebalance'),id=$('portfolioId').value.trim(); if(!id)return; b.disabled=true; try{const r=await fetch('/api/v1/crypto/paper/portfolios/dynamic-rebalance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({portfolioId:id,asOf:new Date().toISOString(),execute:false})}); const d=await r.json(); if(!r.ok)throw new Error(d.detail||'계획 생성 실패'); const excluded=d.assessments.filter(x=>!x.eligible); $('rebalancePlan').innerHTML=`<div class="grid"><div class="item span-4"><span class="muted">평가 자산</span><div class="metric">${d.assessments.length}</div></div><div class="item span-4"><span class="muted">최종 편입</span><div class="metric">${d.selected.length}</div></div><div class="item span-4"><span class="muted">주문 계획</span><div class="metric">${d.orders.length}</div></div></div><div class="table-wrap"><table><thead><tr><th>편입 종목</th><th>점수</th><th>목표 비중</th><th>이유</th></tr></thead><tbody>${d.selected.map(x=>`<tr><td><strong>${safe(x.pair)}</strong></td><td>${x.score.toFixed(5)}</td><td>${(Number(x.targetWeight)*100).toFixed(1)}%</td><td>${safe(x.reason)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">왕복 비용 허들을 넘는 종목 없음 — 현금 유지</td></tr>'}</tbody></table></div><div class="table-wrap"><table><thead><tr><th>주문</th><th>종목</th><th>금액</th><th>현재 → 목표</th></tr></thead><tbody>${d.orders.map(x=>`<tr><td>${badge(x.side)}</td><td>${safe(x.pair)}</td><td>₩${Number(x.notional).toLocaleString('ko-KR')}</td><td>${(Number(x.currentWeight)*100).toFixed(1)}% → ${(Number(x.targetWeight)*100).toFixed(1)}%</td></tr>`).join('')||'<tr><td colspan="4" class="empty">리밸런싱 필요 없음</td></tr>'}</tbody></table></div><div class="item tiny"><strong>제외 사유</strong><br>${excluded.slice(0,30).map(x=>`${safe(x.pair)}: ${safe(x.reason)}`).join(' · ')||'없음'}</div>`;}catch(e){$('rebalancePlan').innerHTML=`<div class="item warning">${safe(e.message)}</div>`;}finally{b.disabled=false;}}
+  async function refreshAll(){const b=$('refresh'); b.disabled=true; try{await refreshPrices(); await Promise.allSettled([refreshRuntime(),refreshUniverse(),refreshResearch(),refreshModel(),loadPortfolio(),loadExecutions(),loadDecisions()]);}finally{b.disabled=false;}}
+  document.querySelectorAll('[data-job]').forEach(b=>b.addEventListener('click',async()=>{if(b.dataset.confirm&&!confirm(b.dataset.confirm))return; b.disabled=true; try{const r=await fetch(`/api/v1/jobs/${b.dataset.job}/run`,{method:'POST'}); const data=await r.json(); if(!r.ok)throw new Error(data.detail||'실행 실패'); toast(`${b.dataset.job}: ${data.execution.status}`); await refreshAll();}catch(e){toast(e.message,true);}finally{b.disabled=false;}}));
+  $('refresh').addEventListener('click',refreshAll); $('loadPortfolio').addEventListener('click',()=>Promise.all([loadPortfolio(),loadExecutions(),loadDecisions()]));
+  $('planRebalance').addEventListener('click',planRebalance);
+  const storedPortfolio=localStorage.getItem('paperPortfolioId');
+  $('portfolioId').value=(!storedPortfolio||storedPortfolio==='crypto-paper-001')?dashboardConfig.paperPortfolioId:storedPortfolio;
+  $('paperMode').className=`badge ${dashboardConfig.paperExecutionEnabled?'ok':'status-SKIPPED'}`;
+  $('paperMode').innerHTML=`<i class="dot"></i>${dashboardConfig.paperExecutionEnabled?'자동 Paper 활성':'자동 Paper 비활성'}`;
+  setInterval(()=>$('clock').textContent=new Intl.DateTimeFormat('ko-KR',{dateStyle:'medium',timeStyle:'medium'}).format(new Date()),1000);
+  setInterval(refreshAll,30000); refreshAll();
+</script>
+</body>
+</html>

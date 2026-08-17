@@ -22,13 +22,16 @@ class PurgedWalkForwardConfig:
     mode: WalkForwardMode = WalkForwardMode.ROLLING
 
     def __post_init__(self) -> None:
-        if min(
-            self.train_days,
-            self.validation_days,
-            self.test_days,
-            self.step_days,
-            self.purge_days,
-        ) <= 0:
+        if (
+            min(
+                self.train_days,
+                self.validation_days,
+                self.test_days,
+                self.step_days,
+                self.purge_days,
+            )
+            <= 0
+        ):
             raise ValueError("walk-forward durations must be positive")
 
 
@@ -65,16 +68,11 @@ class PurgedWalkForwardSplitter:
             test_end = test_start + timedelta(days=self.config.test_days)
             if test_end > last + timedelta(days=1):
                 break
-            train = frame.filter(
-                (pl.col("as_of") >= train_start) & (pl.col("as_of") < train_end)
-            )
+            train = frame.filter((pl.col("as_of") >= train_start) & (pl.col("as_of") < train_end))
             validation = frame.filter(
-                (pl.col("as_of") >= validation_start)
-                & (pl.col("as_of") < validation_end)
+                (pl.col("as_of") >= validation_start) & (pl.col("as_of") < validation_end)
             )
-            test = frame.filter(
-                (pl.col("as_of") >= test_start) & (pl.col("as_of") < test_end)
-            )
+            test = frame.filter((pl.col("as_of") >= test_start) & (pl.col("as_of") < test_end))
             if train.is_empty() or validation.is_empty() or test.is_empty():
                 break
             splits.append(PurgedWalkForwardSplit(fold, train, validation, test))

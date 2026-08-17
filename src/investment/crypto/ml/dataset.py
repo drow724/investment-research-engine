@@ -88,11 +88,7 @@ class CrossSectionalDatasetBuilder:
             for symbol, candles in market_data.candles.items()
         }
         btc_symbol = next(
-            (
-                pair.symbol
-                for pair in market_data.universe.pairs
-                if pair.base.symbol == "BTC"
-            ),
+            (pair.symbol for pair in market_data.universe.pairs if pair.base.symbol == "BTC"),
             None,
         )
         if btc_symbol is None:
@@ -133,11 +129,7 @@ class CrossSectionalDatasetBuilder:
                         "forward_return": float(exit_candle.open / entry.open - 1),
                     }
                 )
-        frame = (
-            pl.DataFrame(rows).sort("as_of", "asset")
-            if rows
-            else _empty_dataset_frame()
-        )
+        frame = pl.DataFrame(rows).sort("as_of", "asset") if rows else _empty_dataset_frame()
         content_hash = _frame_hash(frame)
         limitations = (
             ("STATIC_UNIVERSE_SURVIVORSHIP_RISK",)
@@ -167,9 +159,7 @@ class CrossSectionalDatasetBuilder:
             for symbol, candles in market_data.candles.items()
         }
         btc_symbol = next(
-            pair.symbol
-            for pair in market_data.universe.pairs
-            if pair.base.symbol == "BTC"
+            pair.symbol for pair in market_data.universe.pairs if pair.base.symbol == "BTC"
         )
         btc_known = _known_candles(
             market_data.candles[btc_symbol], available_times[btc_symbol], cutoff
@@ -191,9 +181,7 @@ class CrossSectionalDatasetBuilder:
                 rows.append({"as_of": cutoff, "asset": pair.base.symbol, **features})
         return pl.DataFrame(rows).sort("asset") if rows else _empty_feature_frame()
 
-    def _eligible_symbols(
-        self, market_data: MarketDataBundle, as_of: datetime
-    ) -> set[str]:
+    def _eligible_symbols(self, market_data: MarketDataBundle, as_of: datetime) -> set[str]:
         if self.universe_mode is UniverseMode.STATIC_EXPLICIT:
             return {pair.symbol for pair in market_data.universe.pairs}
         if self.eligibility_model is None:
@@ -224,22 +212,21 @@ def _features(
     volume_window = volumes[-30:]
     volume_std = float(np.std(volume_window, ddof=1))
     volume_zscore = (
-        float((volumes[-1] - np.mean(volume_window)) / volume_std)
-        if volume_std > 0
-        else 0.0
+        float((volumes[-1] - np.mean(volume_window)) / volume_std) if volume_std > 0 else 0.0
     )
     quote_volume = np.mean(closes[-30:] * volumes[-30:])
     btc_short = float(np.mean(btc_closes[-50:]))
     btc_long = float(np.mean(btc_closes[-200:]))
-    regime_score = 1.0 if btc_closes[-1] > btc_long and btc_short > btc_long else (
-        -1.0 if btc_closes[-1] < btc_long else 0.0
+    regime_score = (
+        1.0
+        if btc_closes[-1] > btc_long and btc_short > btc_long
+        else (-1.0 if btc_closes[-1] < btc_long else 0.0)
     )
     return {
         "momentum_7d": closes[-1] / closes[-8] - 1,
         "momentum_30d": closes[-1] / closes[-31] - 1,
         "momentum_90d": closes[-1] / closes[-91] - 1,
-        "relative_strength_30d": (closes[-1] / closes[-31])
-        - (btc_closes[-1] / btc_closes[-31]),
+        "relative_strength_30d": (closes[-1] / closes[-31]) - (btc_closes[-1] / btc_closes[-31]),
         "realized_volatility_30d": float(np.std(returns_30, ddof=1) * np.sqrt(365)),
         "drawdown_30d": closes[-1] / np.max(closes[-30:]) - 1,
         "drawdown_90d": closes[-1] / np.max(closes[-90:]) - 1,

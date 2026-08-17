@@ -23,9 +23,7 @@ class DerivativesFeatureFamily:
         expressions: list[pl.Expr] = []
         if "funding_rate" in result.columns:
             expressions.append(
-                rolling_zscore(
-                    "funding_rate", self.zscore_window, "funding_zscore_30d"
-                )
+                rolling_zscore("funding_rate", self.zscore_window, "funding_zscore_30d")
             )
         if "open_interest" in result.columns:
             value = pl.col("open_interest")
@@ -33,9 +31,7 @@ class DerivativesFeatureFamily:
                 [
                     (value / value.shift(1) - 1).alias("open_interest_change_1d"),
                     (value / value.shift(7) - 1).alias("open_interest_change_7d"),
-                    rolling_zscore(
-                        "open_interest", self.zscore_window, "open_interest_zscore"
-                    ),
+                    rolling_zscore("open_interest", self.zscore_window, "open_interest_zscore"),
                 ]
             )
         return result.with_columns(expressions) if expressions else result

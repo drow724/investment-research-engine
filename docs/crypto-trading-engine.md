@@ -45,8 +45,9 @@ balances, accounting ledgers, and audit records must be scoped by both `portfoli
 
 ## External adapters
 
-- Spring attaches to the versioned REST endpoints under `/api/v1/crypto/...`; it schedules and
-  monitors use cases without orchestrating strategy internals.
+- Python owns normal scheduling through its runtime job registry. Spring receives status events,
+  stores history, presents dashboards, and may use versioned REST endpoints for administration; it
+  is not the normal execution trigger.
 - A future MCP adapter belongs beside REST under `investment.interfaces`, calling the same
   application services. It is an AI-to-tool contract, not Spring-to-Python RPC.
 - Real exchange implementations belong behind `ExchangeGateway` under crypto infrastructure.

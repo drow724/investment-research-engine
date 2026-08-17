@@ -11,5 +11,4 @@ class AllocationRiskDecision(Protocol):
 class AllocationRiskEngine(Protocol):
     def evaluate_allocation(
         self, allocation: PortfolioAllocation, portfolio: TradingPortfolio
-    ) -> AllocationRiskDecision:
-        ...
+    ) -> AllocationRiskDecision: ...

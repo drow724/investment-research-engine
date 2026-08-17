@@ -3,9 +3,12 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import numpy as np
+import pytest
 
 from investment.crypto.application.ml_service import (
+    ActivateModelCommand,
     CryptoMLService,
+    ModelActivationPolicy,
     PredictReturnsCommand,
     TrainModelCommand,
 )
@@ -30,9 +33,7 @@ def test_current_features_do_not_use_candle_unavailable_at_as_of() -> None:
     )
     candles["BTCKRW"] = tuple(btc)
 
-    assert baseline.equals(
-        builder.build_current_features(replace(bundle, candles=candles), as_of)
-    )
+    assert baseline.equals(builder.build_current_features(replace(bundle, candles=candles), as_of))
 
 
 def test_purged_walk_forward_keeps_calendar_gaps() -> None:
@@ -42,9 +43,9 @@ def test_purged_walk_forward_keeps_calendar_gaps() -> None:
         datetime(2024, 7, 1, tzinfo=UTC),
         label_horizon_days=7,
     )
-    splits = PurgedWalkForwardSplitter(
-        PurgedWalkForwardConfig(120, 30, 30, 30, 7)
-    ).split(dataset.frame)
+    splits = PurgedWalkForwardSplitter(PurgedWalkForwardConfig(120, 30, 30, 30, 7)).split(
+        dataset.frame
+    )
     assert splits
     for split in splits:
         train_last = split.train.get_column("as_of").max()
@@ -71,8 +72,14 @@ def test_train_register_and_predict_is_reproducible(tmp_path) -> None:
         2,
     )
     trained = service.train(command)
-    registry = CryptoModelRegistry(tmp_path / "models")
-    registry.activate(trained.metadata.model_id)
+    with pytest.raises(ValueError, match="activation policy rejected"):
+        service.activate(
+            ActivateModelCommand(trained.metadata.model_id, "researcher@example.com"),
+            ModelActivationPolicy(minimum_validation_ic=2.0, minimum_test_ic=2.0),
+        )
+    activation = service.activate(
+        ActivateModelCommand(trained.metadata.model_id, "researcher@example.com")
+    )
     prediction_command = PredictReturnsCommand(
         command.pair_symbols, datetime(2025, 6, 15, tzinfo=UTC)
     )
@@ -80,6 +87,8 @@ def test_train_register_and_predict_is_reproducible(tmp_path) -> None:
     second = service.predict(replace(prediction_command, model_id=trained.metadata.model_id))
 
     assert trained.rows > 0
+    assert activation.activation.approved_by == "researcher@example.com"
+    assert len(tuple((tmp_path / "models" / "activations").glob("*.json"))) == 1
     assert trained.metadata.limitations == ("STATIC_UNIVERSE_SURVIVORSHIP_RISK",)
     assert first == second
     assert len(first.predictions) == 3

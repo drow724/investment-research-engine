@@ -74,3 +74,22 @@ class MomentumBacktestResponse(CryptoApiModel):
     equity_curve: tuple[EquityPointResponse, ...]
     rebalance_count: int
     rejected_rebalances: int
+
+
+class IntradayBacktestRequest(CryptoApiModel):
+    pairs: tuple[str, ...] = Field(min_length=2)
+    start: datetime
+    end: datetime
+    initial_capital: Decimal = Field(default=Decimal("1000000"), gt=0)
+    signal_lookback_bars: int = Field(default=16, ge=2, le=672)
+    rebalance_bars: int = Field(default=4, ge=1, le=96)
+    maximum_positions: int = Field(default=3, ge=1, le=10)
+    fee_rate: Decimal = Field(default=Decimal("0.0005"), ge=0, le=Decimal("0.1"))
+    slippage_rate: Decimal = Field(default=Decimal("0.001"), ge=0, le=Decimal("0.1"))
+
+    @field_validator("start", "end")
+    @classmethod
+    def timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("intraday timestamps must be timezone-aware")
+        return value

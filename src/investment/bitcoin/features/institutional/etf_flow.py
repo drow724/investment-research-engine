@@ -17,16 +17,22 @@ class EtfFlowFeatureFamily:
     def compute(
         self, dataset: PointInTimeDataset, market_cap: pl.DataFrame | None = None
     ) -> pl.DataFrame:
-        raw = dataset.frame().filter(pl.col("metric") == "etf_net_flow").with_columns(
-            pl.col("available_at").dt.truncate("1d").alias("open_time")
+        raw = (
+            dataset.frame()
+            .filter(pl.col("metric") == "etf_net_flow")
+            .with_columns(pl.col("available_at").dt.truncate("1d").alias("open_time"))
         )
         if raw.is_empty():
             raise ValueError("etf_net_flow metric is unavailable")
-        aggregate = raw.filter(pl.col("entity") == "aggregate").group_by("open_time").agg(
-            pl.col("value").last().alias("_aggregate")
+        aggregate = (
+            raw.filter(pl.col("entity") == "aggregate")
+            .group_by("open_time")
+            .agg(pl.col("value").last().alias("_aggregate"))
         )
-        individual = raw.filter(pl.col("entity") != "aggregate").group_by("open_time").agg(
-            pl.col("value").sum().alias("_individual")
+        individual = (
+            raw.filter(pl.col("entity") != "aggregate")
+            .group_by("open_time")
+            .agg(pl.col("value").sum().alias("_individual"))
         )
         frame = aggregate.join(individual, on="open_time", how="full", coalesce=True).sort(
             "open_time"
@@ -44,10 +50,7 @@ class EtfFlowFeatureFamily:
                 flow.rolling_sum(self.short_window)
                 - flow.rolling_sum(self.short_window).shift(self.short_window)
             ).alias("etf_flow_acceleration"),
-            (flow > 0)
-            .cast(pl.Int8)
-            .rolling_sum(10)
-            .alias("etf_flow_positive_days_10d"),
+            (flow > 0).cast(pl.Int8).rolling_sum(10).alias("etf_flow_positive_days_10d"),
         )
         if market_cap is not None and "btc_market_cap" in market_cap.columns:
             frame = frame.join(

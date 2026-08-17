@@ -5,7 +5,12 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from investment.crypto.domain.accounting import PaperPortfolioSnapshot, PaperPosition
+from investment.crypto.domain.accounting import (
+    PaperExecutionRecord,
+    PaperPortfolioSnapshot,
+    PaperPosition,
+    PaperRebalanceDecisionRecord,
+)
 from investment.crypto.domain.market import Asset, AssetKind
 from investment.crypto.domain.order import ApprovedOrder, OrderSide
 from investment.crypto.domain.portfolio import PortfolioPurpose, TradingPortfolio
@@ -57,8 +62,37 @@ class SqlitePaperPortfolioRepository:
                     executed_at TEXT NOT NULL,
                     FOREIGN KEY (portfolio_id) REFERENCES paper_portfolio(portfolio_id)
                 );
+                CREATE TABLE IF NOT EXISTS paper_rebalance_decision (
+                    decision_id TEXT PRIMARY KEY,
+                    portfolio_id TEXT NOT NULL,
+                    strategy_version TEXT NOT NULL,
+                    as_of TEXT NOT NULL,
+                    universe_observed_at TEXT NOT NULL,
+                    execute INTEGER NOT NULL,
+                    equity TEXT NOT NULL,
+                    assessments_json TEXT NOT NULL,
+                    selected_json TEXT NOT NULL,
+                    orders_json TEXT NOT NULL,
+                    risk_violations_json TEXT NOT NULL,
+                    decision_reasons_json TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (portfolio_id) REFERENCES paper_portfolio(portfolio_id)
+                );
                 """
             )
+            connection.execute(
+                "DELETE FROM paper_position WHERE abs(CAST(quantity AS REAL)) < 1e-18"
+            )
+            columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(paper_rebalance_decision)")
+            }
+            if "decision_reasons_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE paper_rebalance_decision "
+                    "ADD COLUMN decision_reasons_json TEXT NOT NULL DEFAULT '[]'"
+                )
 
     def create(self, portfolio: TradingPortfolio) -> PaperPortfolioSnapshot:
         if portfolio.positions:
@@ -130,9 +164,7 @@ class SqlitePaperPortfolioRepository:
                 if required_cash > cash:
                     raise ValueError("insufficient paper cash")
                 new_quantity = old_quantity + report.filled_quantity
-                new_average = (
-                    old_quantity * old_average + notional + report.fee
-                ) / new_quantity
+                new_average = (old_quantity * old_average + notional + report.fee) / new_quantity
                 cash -= required_cash
             else:
                 if report.filled_quantity > old_quantity:
@@ -183,7 +215,7 @@ class SqlitePaperPortfolioRepository:
         quantity: Decimal,
         average_cost: Decimal,
     ) -> None:
-        if quantity == 0:
+        if abs(quantity) < Decimal("1e-18"):
             connection.execute(
                 "DELETE FROM paper_position WHERE portfolio_id = ? AND asset = ?",
                 (portfolio_id, asset),
@@ -224,4 +256,94 @@ class SqlitePaperPortfolioRepository:
                 for row in rows
             ),
             updated_at=datetime.fromisoformat(portfolio["updated_at"]),
+        )
+
+    def list_executions(
+        self, portfolio_id: str, limit: int = 100
+    ) -> tuple[PaperExecutionRecord, ...]:
+        if limit <= 0:
+            raise ValueError("execution limit must be positive")
+        self.get(portfolio_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM paper_execution WHERE portfolio_id = ? "
+                "ORDER BY executed_at DESC LIMIT ?",
+                (portfolio_id, limit),
+            ).fetchall()
+        return tuple(
+            PaperExecutionRecord(
+                str(row["order_id"]),
+                str(row["intent_id"]),
+                str(row["portfolio_id"]),
+                str(row["pair"]),
+                OrderSide(row["side"]),
+                Decimal(row["quantity"]),
+                Decimal(row["price"]),
+                Decimal(row["fee"]),
+                Decimal(row["realized_pnl"]),
+                datetime.fromisoformat(row["executed_at"]),
+            )
+            for row in rows
+        )
+
+    def save_rebalance_decision(self, decision: PaperRebalanceDecisionRecord) -> None:
+        import json
+
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT OR IGNORE INTO paper_rebalance_decision
+                   (decision_id, portfolio_id, strategy_version, as_of, universe_observed_at,
+                    execute, equity, assessments_json, selected_json, orders_json,
+                    risk_violations_json, decision_reasons_json, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    decision.decision_id,
+                    decision.portfolio_id,
+                    decision.strategy_version,
+                    decision.as_of.isoformat(),
+                    decision.universe_observed_at.isoformat(),
+                    int(decision.execute),
+                    str(decision.equity),
+                    decision.assessments_json,
+                    decision.selected_json,
+                    decision.orders_json,
+                    json.dumps(decision.risk_violations),
+                    json.dumps(decision.decision_reasons),
+                    decision.status,
+                    decision.created_at.isoformat(),
+                ),
+            )
+
+    def list_rebalance_decisions(
+        self, portfolio_id: str, limit: int = 100
+    ) -> tuple[PaperRebalanceDecisionRecord, ...]:
+        import json
+
+        if limit <= 0:
+            raise ValueError("decision limit must be positive")
+        self.get(portfolio_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM paper_rebalance_decision WHERE portfolio_id = ? "
+                "ORDER BY as_of DESC LIMIT ?",
+                (portfolio_id, limit),
+            ).fetchall()
+        return tuple(
+            PaperRebalanceDecisionRecord(
+                str(row["decision_id"]),
+                str(row["portfolio_id"]),
+                str(row["strategy_version"]),
+                datetime.fromisoformat(row["as_of"]),
+                datetime.fromisoformat(row["universe_observed_at"]),
+                bool(row["execute"]),
+                Decimal(row["equity"]),
+                str(row["assessments_json"]),
+                str(row["selected_json"]),
+                str(row["orders_json"]),
+                tuple(json.loads(row["risk_violations_json"])),
+                tuple(json.loads(row["decision_reasons_json"])),
+                str(row["status"]),
+                datetime.fromisoformat(row["created_at"]),
+            )
+            for row in rows
         )

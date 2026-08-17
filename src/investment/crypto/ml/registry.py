@@ -3,6 +3,7 @@
 import hashlib
 import json
 import pickle
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,17 @@ class ModelArtifactMetadata:
     created_at: datetime
     comparison: dict[str, object]
     limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelActivationRecord:
+    model_id: str
+    approved_by: str
+    activated_at: datetime
+    previous_model_id: str | None
+    policy_version: str
+    validation_ic: float
+    test_ic: float
 
 
 class CryptoModelRegistry:
@@ -87,14 +99,48 @@ class CryptoModelRegistry:
         (self.root / "LATEST").write_text(model_id, encoding="utf-8")
         return metadata
 
-    def activate(self, model_id: str) -> ModelArtifactMetadata:
+    def activate(
+        self,
+        model_id: str,
+        *,
+        approved_by: str,
+        policy_version: str,
+        validation_ic: float,
+        test_ic: float,
+        activated_at: datetime | None = None,
+    ) -> ModelActivationRecord:
         """Human-approved boundary; training itself never changes the active model."""
-        _, metadata = self.load(model_id)
+        if not approved_by.strip():
+            raise ValueError("approved_by is required for model activation")
+        self.load(model_id)
         self.root.mkdir(parents=True, exist_ok=True)
+        active_path = self.root / "ACTIVE"
+        previous = active_path.read_text(encoding="utf-8").strip() if active_path.exists() else None
+        record = ModelActivationRecord(
+            model_id,
+            approved_by.strip(),
+            activated_at or datetime.now(UTC),
+            previous or None,
+            policy_version,
+            validation_ic,
+            test_ic,
+        )
+        audit_directory = self.root / "activations"
+        audit_directory.mkdir(parents=True, exist_ok=True)
+        audit_path = audit_directory / f"{record.activated_at.strftime('%Y%m%dT%H%M%S.%fZ')}.json"
+        temporary_audit = audit_path.with_suffix(".json.tmp")
+        temporary_audit.write_text(
+            json.dumps(asdict(record), default=_json_default, sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+        temporary_audit.replace(audit_path)
         temporary = self.root / "ACTIVE.tmp"
         temporary.write_text(model_id, encoding="utf-8")
-        temporary.replace(self.root / "ACTIVE")
-        return metadata
+        temporary.replace(active_path)
+        return record
+
+    def active_metadata(self) -> ModelArtifactMetadata:
+        return self.load_active()[1]
 
     def load_active(self) -> tuple[TrainedReturnModel, ModelArtifactMetadata]:
         pointer = self.root / "ACTIVE"
@@ -109,10 +155,10 @@ class CryptoModelRegistry:
         return self.load(pointer.read_text(encoding="utf-8").strip())
 
     def load(self, model_id: str) -> tuple[TrainedReturnModel, ModelArtifactMetadata]:
+        if re.fullmatch(r"crypto-model-[0-9a-f]{16}", model_id) is None:
+            raise ValueError("invalid crypto model identifier")
         directory = self.root / model_id
-        metadata_payload = json.loads(
-            (directory / "metadata.json").read_text(encoding="utf-8")
-        )
+        metadata_payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
         metadata = ModelArtifactMetadata(
             model_id=str(metadata_payload["model_id"]),
             model_kind=ModelKind(metadata_payload["model_kind"]),

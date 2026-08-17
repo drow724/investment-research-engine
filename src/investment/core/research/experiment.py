@@ -43,8 +43,7 @@ class ExperimentRunner:
         if missing:
             raise ValueError(f"missing experiment columns: {sorted(missing)}")
         sample = frame.filter(
-            (pl.col("open_time") >= config.start_time)
-            & (pl.col("open_time") < config.end_time)
+            (pl.col("open_time") >= config.start_time) & (pl.col("open_time") < config.end_time)
         )
         results: dict[str, dict[str, object]] = {}
         stability: dict[str, dict[str, object]] = {}
@@ -63,9 +62,9 @@ class ExperimentRunner:
                     mdd_label=mdd if mdd in sample.columns else None,
                 )
                 results[key] = result.to_dict()
-                stability[key] = FeatureStabilityAnalyzer().by_year(
-                    sample, feature, label
-                ).to_dict()
+                stability[key] = (
+                    FeatureStabilityAnalyzer().by_year(sample, feature, label).to_dict()
+                )
         identity = hashlib.sha256(
             f"{snapshot.snapshot_id}:{config.canonical_json()}".encode()
         ).hexdigest()[:16]

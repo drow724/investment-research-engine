@@ -143,9 +143,7 @@ class BacktestEngine:
         )
 
     @staticmethod
-    def _timeline(
-        market_data: MarketDataBundle, start: datetime, end: datetime
-    ) -> list[datetime]:
+    def _timeline(market_data: MarketDataBundle, start: datetime, end: datetime) -> list[datetime]:
         timestamps = [
             {candle.open_time for candle in market_data.candles[pair.symbol]}
             for pair in market_data.universe.pairs
@@ -179,14 +177,12 @@ class BacktestEngine:
         total_return = float(curve[-1].equity / initial - Decimal("1"))
         gross_return = float(curve[-1].gross_equity / initial - Decimal("1"))
         fee_adjusted = float(fee_only_equity / initial - Decimal("1"))
-        periods_per_year = 365.0
+        periods_per_year = config.periods_per_year
         years = max((timeline[-1] - timeline[0]).total_seconds() / (365.25 * 86400), 1 / 365.25)
         cagr = float(curve[-1].equity / initial) ** (1 / years) - 1
         array = np.asarray(returns, dtype=np.float64)
         volatility = (
-            float(np.std(array, ddof=1) * np.sqrt(periods_per_year))
-            if len(array) > 1
-            else 0.0
+            float(np.std(array, ddof=1) * np.sqrt(periods_per_year)) if len(array) > 1 else 0.0
         )
         mean = float(np.mean(array)) if len(array) else 0.0
         std = float(np.std(array, ddof=1)) if len(array) > 1 else 0.0

@@ -26,9 +26,7 @@ class BtcTrendRegimeModel:
 
     def evaluate(self, market_data: MarketDataBundle, as_of: datetime) -> MarketRegimeResult:
         known = market_data.known_at(as_of)
-        btc_pair = next(
-            (pair for pair in known.universe.pairs if pair.base.symbol == "BTC"), None
-        )
+        btc_pair = next((pair for pair in known.universe.pairs if pair.base.symbol == "BTC"), None)
         if btc_pair is None:
             return MarketRegimeResult(MarketRegime.NEUTRAL, as_of, "btc_trend_v1", {})
         candles = known.candles[btc_pair.symbol]

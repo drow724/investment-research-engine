@@ -39,8 +39,7 @@ class ExperimentService:
             raise ValueError(f"unknown hypothesis: {hypothesis}")
         price = self._price_storage.read(symbol)
         metric_frames = {
-            name: self._read_optional_metric(name)
-            for name in ("etf", "onchain", "derivatives")
+            name: self._read_optional_metric(name) for name in ("etf", "onchain", "derivatives")
         }
         intelligence = BitcoinIntelligenceBuilder().build(
             price,
@@ -52,9 +51,7 @@ class ExperimentService:
         price_dataset = PointInTimeDataset(price, end)
         labels_frame = ForwardLabelGenerator().compute(price_dataset)
         research = intelligence.join(labels_frame, on="open_time", how="left", validate="1:1")
-        selected = research.filter(
-            (pl.col("open_time") >= start) & (pl.col("open_time") < end)
-        )
+        selected = research.filter((pl.col("open_time") >= start) & (pl.col("open_time") < end))
         sources = tuple(
             sorted(
                 {

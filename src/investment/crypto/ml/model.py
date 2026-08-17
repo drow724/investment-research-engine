@@ -102,9 +102,7 @@ class WalkForwardModelTrainer:
                 validation_prediction = np.asarray(
                     estimator.predict(_x(split.validation)), dtype=np.float64
                 )
-                test_prediction = np.asarray(
-                    estimator.predict(_x(split.test)), dtype=np.float64
-                )
+                test_prediction = np.asarray(estimator.predict(_x(split.test)), dtype=np.float64)
                 fold_results.append(
                     FoldModelResult(
                         split.fold,
@@ -133,6 +131,7 @@ class WalkForwardModelTrainer:
             )
             for kind in self.model_kinds
         }
+
         def validation_score(kind: ModelKind) -> float:
             score = validation_scores[kind.value]
             return score if score is not None else float("-inf")

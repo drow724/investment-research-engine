@@ -62,9 +62,7 @@ class CryptoBacktestService:
                 maximum_asset_fraction=Decimal("0.5"),
             )
         )
-        engine = BacktestEngine(
-            regime, strategy, constructor, risk, self._universe_eligibility
-        )
+        engine = BacktestEngine(regime, strategy, constructor, risk, self._universe_eligibility)
         return engine.run(
             market_data,
             BacktestConfig(

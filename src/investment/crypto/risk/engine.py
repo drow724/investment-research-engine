@@ -60,10 +60,7 @@ class DeterministicRiskEngine:
         invested = Decimal("1") - allocation.cash_weight
         if invested > self.policy.maximum_invested_fraction:
             violations.append("MAXIMUM_PORTFOLIO_ALLOCATION_EXCEEDED")
-        if any(
-            item.weight > self.policy.maximum_asset_fraction
-            for item in allocation.allocations
-        ):
+        if any(item.weight > self.policy.maximum_asset_fraction for item in allocation.allocations):
             violations.append("MAXIMUM_ASSET_ALLOCATION_EXCEEDED")
         return RiskDecision(not violations, self.policy.version, tuple(violations))
 

@@ -7,6 +7,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.env
 htmlcov/
 dist/
 build/
@@ -17,9 +18,13 @@ data/raw/*
 data/normalized/*
 data/features/*
 data/paper/*
+data/observations/*
+data/backups/
 models/
 artifacts/
 experiments/output/
+runtime/state/
+*.zip
 
 # Keep directory placeholders
 !data/raw/.gitkeep

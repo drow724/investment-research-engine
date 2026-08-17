@@ -32,9 +32,7 @@ class MLRankingStrategy:
         regime: MarketRegime,
     ) -> StrategyResult:
         positive = [
-            item
-            for item in predictions
-            if item.expected_return > self.minimum_expected_return
+            item for item in predictions if item.expected_return > self.minimum_expected_return
         ][: self.maximum_assets]
         maximum = max((item.expected_return for item in positive), default=0.0)
         signals = tuple(

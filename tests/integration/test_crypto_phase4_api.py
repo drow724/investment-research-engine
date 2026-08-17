@@ -47,9 +47,7 @@ class FakeUniverseService:
 
 def test_crypto_market_and_universe_contracts() -> None:
     app = create_app()
-    app.dependency_overrides[get_crypto_market_data_service] = (
-        lambda: FakeCryptoMarketDataService()
-    )
+    app.dependency_overrides[get_crypto_market_data_service] = lambda: FakeCryptoMarketDataService()
     app.dependency_overrides[get_crypto_universe_service] = lambda: FakeUniverseService()
     client = TestClient(app)
     sync = client.post(

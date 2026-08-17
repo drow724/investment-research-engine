@@ -17,9 +17,11 @@ def test_walk_forward_periods_never_overlap(mode: str) -> None:
     splits = splitter.split(frame)
     assert splits
     for split in splits:
-        assert split.train.get_column("open_time").max() < split.validation.get_column(
-            "open_time"
-        ).min()
-        assert split.validation.get_column("open_time").max() < split.test.get_column(
-            "open_time"
-        ).min()
+        assert (
+            split.train.get_column("open_time").max()
+            < split.validation.get_column("open_time").min()
+        )
+        assert (
+            split.validation.get_column("open_time").max()
+            < split.test.get_column("open_time").min()
+        )

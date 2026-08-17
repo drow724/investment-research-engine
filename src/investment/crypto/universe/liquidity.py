@@ -25,9 +25,7 @@ class PointInTimeLiquidityUniverse:
         if self.minimum_average_quote_volume < 0:
             raise ValueError("minimum liquidity cannot be negative")
 
-    def evaluate(
-        self, market_data: MarketDataBundle, as_of: datetime
-    ) -> UniverseEligibilityResult:
+    def evaluate(self, market_data: MarketDataBundle, as_of: datetime) -> UniverseEligibilityResult:
         snapshot = self.history.known_at(as_of)
         if snapshot is None:
             return UniverseEligibilityResult(
@@ -68,7 +66,7 @@ class PointInTimeLiquidityUniverse:
         if self.require_btc:
             btc = next((pair for pair in ranked if pair.base.symbol == "BTC"), None)
             if btc is not None and btc not in selected:
-                selected = ([*selected[:-1], btc] if selected else [btc])
+                selected = [*selected[:-1], btc] if selected else [btc]
         selected_symbols = {pair.symbol for pair in selected}
         for pair in eligible:
             if pair.symbol not in selected_symbols:

@@ -37,3 +37,11 @@ class PaperExchangeGateway:
         )
         self._reports[order.intent.intent_id] = report
         return report
+
+
+class PaperExchangeGatewayFactory:
+    def __init__(self, fee_rate: Decimal = Decimal("0.0005")) -> None:
+        self.fee_rate = fee_rate
+
+    def create(self, prices: Mapping[str, Decimal]) -> PaperExchangeGateway:
+        return PaperExchangeGateway(prices, self.fee_rate)

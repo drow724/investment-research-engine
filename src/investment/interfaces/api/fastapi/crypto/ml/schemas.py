@@ -91,6 +91,21 @@ class ModelMetadataResponse(CryptoApiModel):
     limitations: tuple[str, ...]
 
 
+class ActivateModelRequest(CryptoApiModel):
+    approved_by: str = Field(min_length=1, max_length=200)
+
+
+class ActivateModelResponse(CryptoApiModel):
+    model_id: str
+    status: Literal["ACTIVE"] = "ACTIVE"
+    approved_by: str
+    activated_at: datetime
+    previous_model_id: str | None
+    policy_version: str
+    validation_ic: float
+    test_ic: float
+
+
 class RunPaperMLJobRequest(PredictReturnsRequest):
     portfolio_id: str = Field(min_length=1)
     regime: Literal["RISK_ON", "NEUTRAL", "RISK_OFF"] = "NEUTRAL"

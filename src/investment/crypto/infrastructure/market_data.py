@@ -13,26 +13,24 @@ from investment.crypto.domain.market import (
     TradingPair,
     TradingUniverse,
 )
+from investment.crypto.domain.timeframe import CandleTimeframe
 
 
 class InMemoryCryptoMarketDataProvider:
     def __init__(self, bundle: MarketDataBundle) -> None:
         self._bundle = bundle
 
-    def fetch(
-        self, universe: TradingUniverse, start: datetime, end: datetime
-    ) -> MarketDataBundle:
+    def fetch(self, universe: TradingUniverse, start: datetime, end: datetime) -> MarketDataBundle:
         start_utc = require_utc(start, "start")
         end_utc = require_utc(end, "end")
-        if universe != self._bundle.universe:
-            raise ValueError("requested universe does not match in-memory data")
+        available = {pair.symbol for pair in self._bundle.universe.pairs}
+        requested = {pair.symbol for pair in universe.pairs}
+        if not requested.issubset(available):
+            raise ValueError("requested universe is not available in in-memory data")
         candles = {
-            symbol: tuple(
-                candle
-                for candle in values
-                if start_utc <= candle.open_time < end_utc
-            )
+            symbol: tuple(candle for candle in values if start_utc <= candle.open_time < end_utc)
             for symbol, values in self._bundle.candles.items()
+            if symbol in requested
         }
         return MarketDataBundle(universe, candles)
 
@@ -40,27 +38,36 @@ class InMemoryCryptoMarketDataProvider:
 class ParquetCryptoMarketDataProvider:
     """Read one normalized daily OHLCV Parquet file per pair symbol."""
 
-    def __init__(self, root: str | Path = "data/normalized/crypto/price") -> None:
+    def __init__(
+        self,
+        root: str | Path = "data/normalized/crypto/price",
+        timeframe: CandleTimeframe = CandleTimeframe.DAY_1,
+    ) -> None:
         self.root = Path(root)
+        self.timeframe = timeframe
 
-    def fetch(
-        self, universe: TradingUniverse, start: datetime, end: datetime
-    ) -> MarketDataBundle:
+    def fetch(self, universe: TradingUniverse, start: datetime, end: datetime) -> MarketDataBundle:
         start_utc = require_utc(start, "start")
         end_utc = require_utc(end, "end")
         candles = {
-            pair.symbol: self._read_pair(pair, start_utc, end_utc)
-            for pair in universe.pairs
+            pair.symbol: self._read_pair(pair, start_utc, end_utc) for pair in universe.pairs
         }
         return MarketDataBundle(universe, candles)
 
     def _read_pair(
         self, pair: TradingPair, start: datetime, end: datetime
     ) -> tuple[MarketCandle, ...]:
-        path = self.root / f"{pair.symbol}.parquet"
-        frame = pl.read_parquet(path).filter(
-            (pl.col("open_time") >= start) & (pl.col("open_time") < end)
-        ).sort("open_time")
+        directory = (
+            self.root
+            if self.timeframe is CandleTimeframe.DAY_1
+            else self.root / self.timeframe.value
+        )
+        path = directory / f"{pair.symbol}.parquet"
+        frame = (
+            pl.read_parquet(path)
+            .filter((pl.col("open_time") >= start) & (pl.col("open_time") < end))
+            .sort("open_time")
+        )
         required = {"open_time", "available_at", "open", "high", "low", "close", "volume"}
         missing = required.difference(frame.columns)
         if missing:

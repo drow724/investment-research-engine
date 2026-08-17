@@ -67,9 +67,7 @@ def test_experiment_service_builds_and_registers_absorption_experiment(tmp_path)
         RawMetricBatch("etf", metric_start, metric_end, "fixture_etf", etf_records)
     )
     onchain = BitcoinOnChainNormalizer(OnChainPublicationAvailabilityPolicy()).normalize(
-        RawMetricBatch(
-            "onchain", metric_start, metric_end, "fixture_onchain", onchain_records
-        )
+        RawMetricBatch("onchain", metric_start, metric_end, "fixture_onchain", onchain_records)
     )
     metric_storage.save("etf", etf)
     metric_storage.save("onchain", onchain)

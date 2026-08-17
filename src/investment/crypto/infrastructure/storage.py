@@ -9,6 +9,7 @@ from pathlib import Path
 import polars as pl
 
 from investment.crypto.domain.market import MarketCandle, TradingPair
+from investment.crypto.domain.timeframe import CandleTimeframe
 from investment.crypto.infrastructure.upbit import RawUpbitCandleBatch
 
 
@@ -21,7 +22,7 @@ class CryptoRawCandleStorage:
         self.root = Path(root)
 
     def save(self, batch: RawUpbitCandleBatch) -> Path:
-        directory = self.root / batch.source
+        directory = self.root / batch.source / batch.timeframe.value
         directory.mkdir(parents=True, exist_ok=True)
         canonical_records = json.dumps(
             batch.records, ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str
@@ -36,6 +37,7 @@ class CryptoRawCandleStorage:
             "start": batch.start.isoformat(),
             "end": batch.end.isoformat(),
             "ingested_at": batch.ingested_at.isoformat(),
+            "timeframe": batch.timeframe.value,
             "records": batch.records,
         }
         if path.exists():
@@ -60,22 +62,37 @@ class CryptoCandleParquetStorage:
         *,
         source: str,
         ingested_at: datetime,
+        timeframe: CandleTimeframe = CandleTimeframe.DAY_1,
     ) -> Path:
-        self.root.mkdir(parents=True, exist_ok=True)
-        path = self.root / f"{pair.symbol}.parquet"
+        directory = self.root if timeframe is CandleTimeframe.DAY_1 else self.root / timeframe.value
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{pair.symbol}.parquet"
         frame = _candles_to_frame(candles, source, ingested_at)
         combined = (
             pl.concat([pl.read_parquet(path), frame], how="diagonal_relaxed")
             if path.exists()
             else frame
         )
-        combined = combined.unique(
-            subset=["source", "symbol", "open_time"], keep="last"
-        ).sort("open_time")
+        combined = combined.unique(subset=["source", "symbol", "open_time"], keep="last").sort(
+            "open_time"
+        )
         temporary = path.with_suffix(".parquet.tmp")
         combined.write_parquet(temporary)
         temporary.replace(path)
         return path
+
+    def exists(self, pair: TradingPair, timeframe: CandleTimeframe = CandleTimeframe.DAY_1) -> bool:
+        directory = self.root if timeframe is CandleTimeframe.DAY_1 else self.root / timeframe.value
+        return (directory / f"{pair.symbol}.parquet").exists()
+
+    def row_count(
+        self, pair: TradingPair, timeframe: CandleTimeframe = CandleTimeframe.DAY_1
+    ) -> int:
+        directory = self.root if timeframe is CandleTimeframe.DAY_1 else self.root / timeframe.value
+        path = directory / f"{pair.symbol}.parquet"
+        if not path.exists():
+            return 0
+        return int(pl.scan_parquet(path).select(pl.len()).collect().item())
 
 
 def _candles_to_frame(
@@ -96,19 +113,23 @@ def _candles_to_frame(
         }
         for candle in candles
     ]
-    return pl.DataFrame(rows) if rows else pl.DataFrame(
-        schema={
-            "symbol": pl.String,
-            "open_time": pl.Datetime("us", "UTC"),
-            "available_at": pl.Datetime("us", "UTC"),
-            "ingested_at": pl.Datetime("us", "UTC"),
-            "open": pl.Float64,
-            "high": pl.Float64,
-            "low": pl.Float64,
-            "close": pl.Float64,
-            "volume": pl.Float64,
-            "source": pl.String,
-        }
+    return (
+        pl.DataFrame(rows)
+        if rows
+        else pl.DataFrame(
+            schema={
+                "symbol": pl.String,
+                "open_time": pl.Datetime("us", "UTC"),
+                "available_at": pl.Datetime("us", "UTC"),
+                "ingested_at": pl.Datetime("us", "UTC"),
+                "open": pl.Float64,
+                "high": pl.Float64,
+                "low": pl.Float64,
+                "close": pl.Float64,
+                "volume": pl.Float64,
+                "source": pl.String,
+            }
+        )
     )
 
 

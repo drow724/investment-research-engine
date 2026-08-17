@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from investment.bitcoin.data.price.normalizer import BinanceDailyNormalizer
 from investment.core.data.provider import MarketDataProvider
 from investment.core.data.storage import NormalizedParquetStorage, RawJsonStorage
+from investment.market_data.crypto.binance import BinanceDailyNormalizer
 
 
 @dataclass(frozen=True, slots=True)

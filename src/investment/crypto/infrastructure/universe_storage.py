@@ -48,7 +48,5 @@ class UniverseSnapshotStorage:
                 raise ValueError(f"unsupported stored universe pair: {symbol}")
             base = symbol.removesuffix("KRW")
             pair = parse_trading_pair(f"{base}/KRW")
-            members.append(
-                UniverseMember(pair, bool(item["warning"]), source, observed_at)
-            )
+            members.append(UniverseMember(pair, bool(item["warning"]), source, observed_at))
         return UniverseSnapshot(observed_at, source, tuple(members))

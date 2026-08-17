@@ -28,9 +28,7 @@ class FeatureStabilityResult:
 
 
 class FeatureStabilityAnalyzer:
-    def by_year(
-        self, frame: pl.DataFrame, feature: str, label: str
-    ) -> FeatureStabilityResult:
+    def by_year(self, frame: pl.DataFrame, feature: str, label: str) -> FeatureStabilityResult:
         years = frame.get_column("open_time").dt.year().unique().sort().to_list()
         groups = [
             (str(year), frame.filter(pl.col("open_time").dt.year() == year)) for year in years

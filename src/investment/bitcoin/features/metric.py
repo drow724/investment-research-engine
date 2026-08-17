@@ -15,9 +15,7 @@ def daily_metric(
 ) -> pl.DataFrame:
     frame = dataset.frame().filter(pl.col("metric") == metric)
     if frame.is_empty():
-        return pl.DataFrame(
-            schema={"open_time": pl.Datetime("us", "UTC"), metric: pl.Float64()}
-        )
+        return pl.DataFrame(schema={"open_time": pl.Datetime("us", "UTC"), metric: pl.Float64()})
     # Align the observation to when it was knowable, not merely to the economic event date.
     frame = frame.with_columns(pl.col("available_at").dt.truncate("1d").alias("open_time"))
     value = pl.col("value")

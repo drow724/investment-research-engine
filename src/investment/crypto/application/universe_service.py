@@ -9,9 +9,7 @@ from investment.crypto.infrastructure.upbit import UpbitPublicClient
 
 
 class CryptoUniverseService:
-    def __init__(
-        self, client: UpbitPublicClient, storage: UniverseSnapshotStorage
-    ) -> None:
+    def __init__(self, client: UpbitPublicClient, storage: UniverseSnapshotStorage) -> None:
         self._client = client
         self._storage = storage
 

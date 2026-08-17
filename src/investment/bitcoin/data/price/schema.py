@@ -1,20 +1,5 @@
-"""Canonical BTC daily OHLCV schema."""
+"""Deprecated compatibility import for the canonical crypto OHLCV schema."""
 
-import polars as pl
+from investment.market_data.crypto.schema import OHLCV_COLUMNS, OHLCV_SCHEMA
 
-OHLCV_SCHEMA = pl.Schema(
-    {
-        "symbol": pl.String(),
-        "open_time": pl.Datetime("ms", "UTC"),
-        "available_at": pl.Datetime("ms", "UTC"),
-        "ingested_at": pl.Datetime("us", "UTC"),
-        "open": pl.Float64(),
-        "high": pl.Float64(),
-        "low": pl.Float64(),
-        "close": pl.Float64(),
-        "volume": pl.Float64(),
-        "source": pl.String(),
-    }
-)
-
-OHLCV_COLUMNS = list(OHLCV_SCHEMA)
+__all__ = ["OHLCV_COLUMNS", "OHLCV_SCHEMA"]

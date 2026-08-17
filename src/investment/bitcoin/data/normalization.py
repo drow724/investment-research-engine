@@ -30,9 +30,7 @@ class LongFormMetricNormalizer:
         self.default_unit = default_unit
         self.non_negative_metrics = non_negative_metrics
 
-    def normalize(
-        self, batch: RawMetricBatch, ingested_at: datetime | None = None
-    ) -> pl.DataFrame:
+    def normalize(self, batch: RawMetricBatch, ingested_at: datetime | None = None) -> pl.DataFrame:
         if batch.dataset != self.dataset:
             raise ValueError(f"expected {self.dataset} batch, got {batch.dataset}")
         ingestion = (ingested_at or datetime.now(UTC)).astimezone(UTC)

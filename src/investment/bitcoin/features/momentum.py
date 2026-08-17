@@ -39,6 +39,4 @@ class PriceVsMovingAverageFeature:
 
     def compute(self, dataset: PointInTimeDataset) -> pl.DataFrame:
         average = pl.col("close").rolling_mean(self.days)
-        return dataset.frame().select(
-            "open_time", (pl.col("close") / average - 1).alias(self.name)
-        )
+        return dataset.frame().select("open_time", (pl.col("close") / average - 1).alias(self.name))

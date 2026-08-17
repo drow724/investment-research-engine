@@ -38,9 +38,7 @@ def test_experiment_state_machine_rejects_invalid_transitions() -> None:
     experiment = _experiment()
     with pytest.raises(ValueError, match="invalid experiment transition"):
         experiment.transition(ExperimentStatus.PROMOTED)
-    running = experiment.transition(ExperimentStatus.READY).transition(
-        ExperimentStatus.RUNNING
-    )
+    running = experiment.transition(ExperimentStatus.READY).transition(ExperimentStatus.RUNNING)
     assert running.started_at is not None
     assert running.transition(ExperimentStatus.FAILED).status is ExperimentStatus.FAILED
 
@@ -52,6 +50,4 @@ def test_walk_forward_validation_never_allows_future_data_into_train() -> None:
     overlapping = ResearchPeriod(now + timedelta(days=30), now + timedelta(days=60))
 
     assert WalkForwardValidation(7).validate_periods(train, safe) == ()
-    assert WalkForwardValidation(7).validate_periods(train, overlapping) == (
-        "PURGE_GAP_VIOLATION",
-    )
+    assert WalkForwardValidation(7).validate_periods(train, overlapping) == ("PURGE_GAP_VIOLATION",)

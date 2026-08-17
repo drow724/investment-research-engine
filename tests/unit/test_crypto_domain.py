@@ -20,25 +20,19 @@ def test_core_investment_portfolio_cannot_enter_crypto_trading_context() -> None
     with pytest.raises(ValueError, match="core investment"):
         TradingPortfolio("core-btc", PortfolioPurpose.CORE_INVESTMENT, cash, Decimal("1"))
     with pytest.raises(ValueError, match="core investment"):
-        PortfolioAllocation(
-            "core-btc", PortfolioPurpose.CORE_INVESTMENT, (), Decimal("1")
-        )
+        PortfolioAllocation("core-btc", PortfolioPurpose.CORE_INVESTMENT, (), Decimal("1"))
 
 
 def test_universe_can_be_wide_while_constructed_portfolio_is_narrow() -> None:
     cash = Asset("KRW", AssetKind.CASH)
-    portfolio = TradingPortfolio(
-        "paper", PortfolioPurpose.PAPER_TRADING, cash, Decimal("100000")
-    )
+    portfolio = TradingPortfolio("paper", PortfolioPurpose.PAPER_TRADING, cash, Decimal("100000"))
     now = datetime(2025, 1, 1, tzinfo=UTC)
     signals = tuple(
         Signal(Asset(symbol), SignalDirection.LONG, Decimal("1"), now, "fixture")
         for symbol in ("BTC", "ETH", "SOL", "XRP", "DOGE")
     )
     result = StrategyResult("fixture", "v1", now, MarketRegime.RISK_ON, signals)
-    allocation = EqualWeightPortfolioConstructor(maximum_positions=3).construct(
-        portfolio, result
-    )
+    allocation = EqualWeightPortfolioConstructor(maximum_positions=3).construct(portfolio, result)
     assert len(allocation.allocations) == 3
     assert allocation.cash_weight == 0
     assert sum((item.weight for item in allocation.allocations), Decimal("0")) == 1
@@ -47,9 +41,7 @@ def test_universe_can_be_wide_while_constructed_portfolio_is_narrow() -> None:
 def test_risk_engine_is_independent_and_can_reject_strategy_allocation() -> None:
     cash = Asset("KRW", AssetKind.CASH)
     btc = Asset("BTC")
-    portfolio = TradingPortfolio(
-        "paper", PortfolioPurpose.PAPER_TRADING, cash, Decimal("100000")
-    )
+    portfolio = TradingPortfolio("paper", PortfolioPurpose.PAPER_TRADING, cash, Decimal("100000"))
     proposal = PortfolioAllocation(
         "paper",
         PortfolioPurpose.PAPER_TRADING,
@@ -65,9 +57,7 @@ def test_risk_engine_is_independent_and_can_reject_strategy_allocation() -> None
 
 def test_single_signal_keeps_required_cash_instead_of_breaching_asset_limit() -> None:
     cash = Asset("KRW", AssetKind.CASH)
-    portfolio = TradingPortfolio(
-        "paper", PortfolioPurpose.PAPER_TRADING, cash, Decimal("100000")
-    )
+    portfolio = TradingPortfolio("paper", PortfolioPurpose.PAPER_TRADING, cash, Decimal("100000"))
     now = datetime(2025, 1, 1, tzinfo=UTC)
     result = StrategyResult(
         "fixture",

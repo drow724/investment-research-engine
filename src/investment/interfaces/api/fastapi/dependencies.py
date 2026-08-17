@@ -6,8 +6,6 @@ from investment.application.services.experiment_service import ExperimentService
 from investment.application.services.health_service import HealthService
 from investment.application.services.market_data_service import MarketDataService
 from investment.application.services.research_service import ResearchService
-from investment.bitcoin.data.price.normalizer import BinanceDailyNormalizer
-from investment.bitcoin.data.price.provider import BinanceBitcoinPriceProvider
 from investment.core.data.storage import (
     MetricParquetStorage,
     NormalizedParquetStorage,
@@ -15,7 +13,15 @@ from investment.core.data.storage import (
 )
 from investment.core.research.experiment import ExperimentRegistry
 from investment.crypto.application.backtest_service import CryptoBacktestService
+from investment.crypto.application.dynamic_paper_rebalance import (
+    DynamicPaperRebalanceService,
+)
+from investment.crypto.application.intraday_service import (
+    CryptoIntradayBacktestService,
+    CryptoIntradayMarketDataService,
+)
 from investment.crypto.application.market_data_service import CryptoMarketDataService
+from investment.crypto.application.market_overview_service import CryptoMarketOverviewService
 from investment.crypto.application.ml_paper_job import MLPaperJobService
 from investment.crypto.application.ml_service import CryptoMLService
 from investment.crypto.application.paper_trading_service import PaperTradingService
@@ -23,8 +29,12 @@ from investment.crypto.application.research_lifecycle_service import (
     CryptoResearchLifecycleService,
 )
 from investment.crypto.application.universe_service import CryptoUniverseService
+from investment.crypto.domain.timeframe import CandleTimeframe
 from investment.crypto.infrastructure.market_data import ParquetCryptoMarketDataProvider
-from investment.crypto.infrastructure.paper_exchange import PaperExchangeGateway
+from investment.crypto.infrastructure.paper_exchange import (
+    PaperExchangeGateway,
+    PaperExchangeGatewayFactory,
+)
 from investment.crypto.infrastructure.research_repository import JsonResearchLifecycleRepository
 from investment.crypto.infrastructure.sqlite_accounting import SqlitePaperPortfolioRepository
 from investment.crypto.infrastructure.storage import (
@@ -36,6 +46,10 @@ from investment.crypto.infrastructure.upbit import UpbitPublicClient
 from investment.crypto.ml.registry import CryptoModelRegistry
 from investment.crypto.universe.liquidity import PointInTimeLiquidityUniverse
 from investment.interfaces.api.fastapi.settings import Settings
+from investment.market_data.crypto.binance import (
+    BinanceBitcoinPriceProvider,
+    BinanceDailyNormalizer,
+)
 
 
 def get_settings() -> Settings:
@@ -92,6 +106,30 @@ def get_crypto_market_data_service(
     )
 
 
+def get_crypto_market_overview_service(
+    settings: Settings = Depends(get_settings),
+) -> CryptoMarketOverviewService:
+    return CryptoMarketOverviewService(ParquetCryptoMarketDataProvider(settings.crypto_price_root))
+
+
+def get_crypto_intraday_market_data_service(
+    settings: Settings = Depends(get_settings),
+) -> CryptoIntradayMarketDataService:
+    return CryptoIntradayMarketDataService(
+        UpbitPublicClient(settings.upbit_base_url),
+        CryptoRawCandleStorage(settings.crypto_raw_price_root),
+        CryptoCandleParquetStorage(settings.crypto_price_root),
+    )
+
+
+def get_crypto_intraday_backtest_service(
+    settings: Settings = Depends(get_settings),
+) -> CryptoIntradayBacktestService:
+    return CryptoIntradayBacktestService(
+        ParquetCryptoMarketDataProvider(settings.crypto_price_root, CandleTimeframe.MINUTE_15)
+    )
+
+
 def get_crypto_universe_service(
     settings: Settings = Depends(get_settings),
 ) -> CryptoUniverseService:
@@ -107,6 +145,18 @@ def get_paper_trading_service(
     return PaperTradingService(
         PaperExchangeGateway({}),
         SqlitePaperPortfolioRepository(settings.crypto_paper_database),
+    )
+
+
+def get_dynamic_paper_rebalance_service(
+    settings: Settings = Depends(get_settings),
+) -> DynamicPaperRebalanceService:
+    history = UniverseSnapshotStorage(settings.crypto_universe_root).load()
+    return DynamicPaperRebalanceService(
+        history,
+        ParquetCryptoMarketDataProvider(settings.crypto_price_root, CandleTimeframe.MINUTE_15),
+        SqlitePaperPortfolioRepository(settings.crypto_paper_database),
+        PaperExchangeGatewayFactory(),
     )
 
 
