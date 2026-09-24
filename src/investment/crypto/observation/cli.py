@@ -2,7 +2,7 @@
 
 import json
 
-from investment.crypto.application.dynamic_paper_rebalance import DynamicUniversePolicy
+from investment.crypto.application.dynamic_paper_rebalance import dynamic_policy_for_version
 from investment.crypto.domain.timeframe import CandleTimeframe
 from investment.crypto.infrastructure.market_data import ParquetCryptoMarketDataProvider
 from investment.crypto.infrastructure.sqlite_accounting import SqlitePaperPortfolioRepository
@@ -25,7 +25,11 @@ def run_observation_command(action: str) -> None:
     )
     payload: dict[str, object]
     if action == "start":
-        value = service.start(experiment_id, portfolio_id, DynamicUniversePolicy())
+        value = service.start(
+            experiment_id,
+            portfolio_id,
+            dynamic_policy_for_version(settings.runtime_dynamic_strategy_version),
+        )
         payload = {"experimentId": value.experiment_id, "status": value.status.value}
     elif action == "status":
         payload = service.health(experiment_id)

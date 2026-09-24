@@ -41,6 +41,7 @@ def build_autonomous_runtime(
     event_retry_delays: tuple[float, ...],
     event_timeout_seconds: float,
     heartbeat_cron: str,
+    runtime_supervision_handler: JobHandler | None,
     universe_snapshot_cron: str,
     market_sync_cron: str,
     market_sync_pairs: tuple[str, ...],
@@ -48,12 +49,21 @@ def build_autonomous_runtime(
     intraday_sync_cron: str,
     intraday_sync_lookback_hours: int,
     intraday_maximum_assets: int,
+    intraday_sync_budget_seconds: int = 180,
+    derivatives_snapshot_cron: str,
+    derivatives_snapshot_handler: JobHandler | None,
     dynamic_rebalance_cron: str,
     dynamic_rebalance_handler: JobHandler | None,
     dynamic_rebalance_lock_key: str | None,
+    shadow_dynamic_rebalance_cron: str = "6,21,36,51 * * * *",
+    shadow_dynamic_rebalance_handler: JobHandler | None = None,
+    shadow_dynamic_rebalance_lock_key: str | None = None,
     observation_outcome_cron: str,
     observation_outcome_handler: JobHandler | None,
     observation_outcome_lock_key: str | None,
+    strategy_review_cron: str,
+    strategy_review_handler: JobHandler | None,
+    strategy_review_lock_key: str | None,
     universe_service: CryptoUniverseService,
     market_service: CryptoMarketDataService,
     intraday_service: CryptoIntradayMarketDataService,
@@ -76,6 +86,8 @@ def build_autonomous_runtime(
 
     def heartbeat() -> None:
         state.heartbeat()
+        if runtime_supervision_handler is not None:
+            runtime_supervision_handler()
 
     def capture_universe() -> None:
         universe_service.capture_current()
@@ -94,11 +106,16 @@ def build_autonomous_runtime(
             end,
             maximum_assets=intraday_maximum_assets,
             timeframe=CandleTimeframe.MINUTE_15,
+            maximum_duration_seconds=intraday_sync_budget_seconds,
         )
         failures = [item for item in results if item.status == "FAILED"]
-        if failures:
-            pairs = ", ".join(item.pair for item in failures)
-            raise RuntimeError(f"intraday sync partially failed after retries: {pairs}")
+        deferred = [item for item in results if item.status == "DEFERRED"]
+        if failures or deferred:
+            samples = ", ".join(item.pair for item in (*failures, *deferred)[:10])
+            raise RuntimeError(
+                "intraday sync incomplete: "
+                f"{len(failures)} failed, {len(deferred)} deferred; sample: {samples}"
+            )
 
     handlers: dict[str, JobHandler] = {
         "runtime_heartbeat": heartbeat,
@@ -130,6 +147,17 @@ def build_autonomous_runtime(
             lock_key="dataset:crypto-15m-market:refresh",
         ),
     ]
+    if derivatives_snapshot_handler is not None:
+        handlers["crypto_derivatives_snapshot"] = derivatives_snapshot_handler
+        configs.append(
+            ScheduledJobConfig(
+                "crypto_derivatives_snapshot",
+                derivatives_snapshot_cron,
+                timeout_seconds=60,
+                execution_class=JobExecutionClass.STATE_MUTATION,
+                lock_key="dataset:crypto-derivatives:refresh",
+            )
+        )
     if dynamic_rebalance_handler is not None:
         handlers["crypto_dynamic_paper_rebalance"] = dynamic_rebalance_handler
         configs.append(
@@ -141,6 +169,17 @@ def build_autonomous_runtime(
                 lock_key=dynamic_rebalance_lock_key,
             )
         )
+    if shadow_dynamic_rebalance_handler is not None:
+        handlers["crypto_dynamic_paper_shadow_rebalance"] = shadow_dynamic_rebalance_handler
+        configs.append(
+            ScheduledJobConfig(
+                "crypto_dynamic_paper_shadow_rebalance",
+                shadow_dynamic_rebalance_cron,
+                timeout_seconds=300,
+                execution_class=JobExecutionClass.EXECUTION,
+                lock_key=shadow_dynamic_rebalance_lock_key,
+            )
+        )
     if observation_outcome_handler is not None:
         handlers["crypto_observation_outcome_evaluation"] = observation_outcome_handler
         configs.append(
@@ -150,6 +189,17 @@ def build_autonomous_runtime(
                 timeout_seconds=300,
                 execution_class=JobExecutionClass.STATE_MUTATION,
                 lock_key=observation_outcome_lock_key,
+            )
+        )
+    if strategy_review_handler is not None:
+        handlers["crypto_strategy_review"] = strategy_review_handler
+        configs.append(
+            ScheduledJobConfig(
+                "crypto_strategy_review",
+                strategy_review_cron,
+                timeout_seconds=300,
+                execution_class=JobExecutionClass.STATE_MUTATION,
+                lock_key=strategy_review_lock_key,
             )
         )
     registry = ApplicationJobRegistry(handlers)

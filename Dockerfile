@@ -3,7 +3,8 @@ FROM python:3.13-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_DEFAULT_TIMEOUT=60 \
+    PIP_RETRIES=10
 
 WORKDIR /app
 
@@ -12,8 +13,10 @@ RUN groupadd --system investment \
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY config ./config
 
-RUN python -m pip install --upgrade pip \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip \
     && python -m pip install .
 
 RUN mkdir -p /app/data /app/runtime /app/experiments /app/models \

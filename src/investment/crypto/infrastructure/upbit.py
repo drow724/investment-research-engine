@@ -93,14 +93,39 @@ class UpbitPublicClient:
         rate_limiter: UpbitRateLimiter | None = None,
         maximum_rate_limit_retries: int = 4,
         jitter: Callable[[], float] = lambda: random.uniform(0.05, 0.25),
+        persistent: bool = False,
+        request_timeout_seconds: float = 10.0,
     ) -> None:
         if maximum_rate_limit_retries < 0:
             raise ValueError("maximum_rate_limit_retries cannot be negative")
+        if request_timeout_seconds <= 0:
+            raise ValueError("request_timeout_seconds must be positive")
         self.base_url = base_url.rstrip("/")
-        self._client = client
+        self._owns_client = client is None and persistent
+        self._client = (
+            client
+            if client is not None
+            else (
+                httpx.Client(
+                    timeout=httpx.Timeout(
+                        request_timeout_seconds,
+                        connect=min(5.0, request_timeout_seconds),
+                    )
+                )
+                if persistent
+                else None
+            )
+        )
+        self._request_timeout_seconds = request_timeout_seconds
         self._limiter = rate_limiter or _PROCESS_UPBIT_RATE_LIMITER
         self._maximum_rate_limit_retries = maximum_rate_limit_retries
         self._jitter = jitter
+
+    def close(self) -> None:
+        """Close the connection pool owned by a persistent client."""
+
+        if self._owns_client and self._client is not None:
+            self._client.close()
 
     def rank_markets_by_quote_volume(
         self, markets: tuple[str, ...]
@@ -234,7 +259,12 @@ class UpbitPublicClient:
 
     def _get_json(self, path: str, params: Mapping[str, str | int]) -> Any:
         owns_client = self._client is None
-        client = self._client or httpx.Client(timeout=30)
+        client = self._client or httpx.Client(
+            timeout=httpx.Timeout(
+                self._request_timeout_seconds,
+                connect=min(5.0, self._request_timeout_seconds),
+            )
+        )
         try:
             for attempt in range(self._maximum_rate_limit_retries + 1):
                 self._limiter.wait()

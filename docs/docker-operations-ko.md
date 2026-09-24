@@ -48,6 +48,9 @@ docker compose logs --tail=100 investment-engine
 
 - 호스트 uvicorn과 Compose를 동시에 실행하지 않는다.
 - `docker compose up --scale investment-engine=2`처럼 service를 복제하지 않는다.
+- Compose 실행 중에는 macOS 호스트에서 `data/**/*.sqlite3`를 직접 열거나 조회하지 않는다.
+  Docker Desktop VM과 호스트 사이에는 SQLite WAL 잠금이 안정적으로 공유되지 않는다.
+  실행 중 조회는 dashboard/API를 사용하고, `sqlite3` 분석이 필요하면 먼저 Compose를 멈춘다.
 - SQLite 파일을 컨테이너 이미지에 복사하지 않는다.
 - `.env`의 `INVESTMENT_RUNTIME_DYNAMIC_PAPER_EXECUTE=false`를 유지한다.
 - Mac이 절전 상태가 되면 Docker 스케줄러도 정상적인 실시간 실행을 보장하지 않는다.

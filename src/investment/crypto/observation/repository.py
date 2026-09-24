@@ -6,7 +6,9 @@ from pathlib import Path
 
 from investment.crypto.observation.domain import (
     DecisionAction,
+    DecisionMarketContext,
     DecisionOutcome,
+    DecisionSelectionVariant,
     DecisionSnapshot,
     ObservationExperiment,
     ObservationStatus,
@@ -52,21 +54,40 @@ class SqliteObservationRepository:
                 CREATE TABLE IF NOT EXISTS decision_outcome_minute (
                     snapshot_id TEXT NOT NULL, horizon_minutes INTEGER NOT NULL,
                     target_at TEXT NOT NULL, evaluated_at TEXT NOT NULL, status TEXT NOT NULL,
-                    forward_return REAL, mfe REAL, mae REAL,
+                    forward_return REAL, mfe REAL, mae REAL, missing_reason TEXT,
                     PRIMARY KEY(snapshot_id, horizon_minutes),
+                    FOREIGN KEY(snapshot_id) REFERENCES decision_snapshot(snapshot_id)
+                );
+                CREATE TABLE IF NOT EXISTS decision_market_context (
+                    experiment_id TEXT NOT NULL,
+                    decision_id TEXT NOT NULL,
+                    strategy_version TEXT NOT NULL,
+                    config_hash TEXT NOT NULL,
+                    decision_time TEXT NOT NULL,
+                    context_json TEXT NOT NULL,
+                    PRIMARY KEY(experiment_id, decision_id),
+                    FOREIGN KEY(experiment_id) REFERENCES observation_experiment(experiment_id)
+                );
+                CREATE TABLE IF NOT EXISTS decision_selection_variant (
+                    snapshot_id TEXT NOT NULL,
+                    variant_id TEXT NOT NULL,
+                    selected INTEGER NOT NULL,
+                    target_position REAL NOT NULL,
+                    reason TEXT NOT NULL,
+                    PRIMARY KEY(snapshot_id, variant_id),
                     FOREIGN KEY(snapshot_id) REFERENCES decision_snapshot(snapshot_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_snapshot_experiment_time
                     ON decision_snapshot(experiment_id, decision_time);
+                CREATE INDEX IF NOT EXISTS idx_selection_variant_lookup
+                    ON decision_selection_variant(variant_id, snapshot_id);
                 """
             )
             self._migrate(connection)
 
     @staticmethod
     def _migrate(connection: sqlite3.Connection) -> None:
-        columns = {
-            row[1] for row in connection.execute("PRAGMA table_info(decision_snapshot)")
-        }
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(decision_snapshot)")}
         additions = {
             "momentum_1h": "REAL",
             "momentum_4h": "REAL",
@@ -74,12 +95,25 @@ class SqliteObservationRepository:
             "volatility": "REAL",
             "reference_at": "TEXT",
             "selected_rank": "INTEGER",
+            "raw_score": "REAL",
+            "score_penalty": "REAL",
+            "expected_relative_return_1h": "REAL",
+            "expected_relative_return_4h": "REAL",
+            "fee_adjusted_expected_return": "REAL",
+            "candidate_reasons_json": "TEXT NOT NULL DEFAULT '[]'",
         }
         for name, kind in additions.items():
             if name not in columns:
                 connection.execute(f"ALTER TABLE decision_snapshot ADD COLUMN {name} {kind}")
+        outcome_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(decision_outcome_minute)")
+        }
+        if "missing_reason" not in outcome_columns:
+            connection.execute("ALTER TABLE decision_outcome_minute ADD COLUMN missing_reason TEXT")
         connection.execute(
             """INSERT OR IGNORE INTO decision_outcome_minute
+               (snapshot_id, horizon_minutes, target_at, evaluated_at, status,
+                forward_return, mfe, mae)
                SELECT snapshot_id, horizon_hours * 60, target_at, evaluated_at, status,
                       forward_return, mfe, mae
                FROM decision_outcome"""
@@ -181,55 +215,178 @@ class SqliteObservationRepository:
             "unresolvedDecisions": int(unresolved["unresolved"] or 0),
         }
 
-    def save_snapshots(self, values: tuple[DecisionSnapshot, ...]) -> int:
-        inserted = 0
+    def missing_reason_counts(self, experiment_id: str) -> dict[str, int]:
+        """Separate newly diagnosed gaps from immutable legacy missing outcomes."""
         with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT COALESCE(o.missing_reason, 'LEGACY_UNCLASSIFIED') AS reason,
+                          COUNT(*) AS occurrences
+                   FROM decision_outcome_minute o JOIN decision_snapshot s
+                     ON s.snapshot_id=o.snapshot_id
+                   WHERE s.experiment_id=? AND o.status='MISSING_DATA'
+                   GROUP BY COALESCE(o.missing_reason, 'LEGACY_UNCLASSIFIED')
+                   ORDER BY occurrences DESC, reason""",
+                (experiment_id,),
+            ).fetchall()
+        return {str(row["reason"]): int(row["occurrences"]) for row in rows}
+
+    def save_snapshots(self, values: tuple[DecisionSnapshot, ...]) -> int:
+        with self._connect() as connection:
+            return self._insert_snapshots(connection, values)
+
+    def save_decision_bundle(
+        self,
+        values: tuple[DecisionSnapshot, ...],
+        context: DecisionMarketContext | None,
+        selection_variants: tuple[DecisionSelectionVariant, ...] = (),
+    ) -> int:
+        """Atomically store one frozen cohort, context, and rule-control selections."""
+
+        if context is not None:
             for value in values:
-                cursor = connection.execute(
-                    """INSERT OR IGNORE INTO decision_snapshot
-                       (snapshot_id, experiment_id, decision_id, strategy_version, config_hash,
-                        decision_time, asset, market, action, reason, score, rank, eligible,
-                        selected, current_position, target_position, portfolio_cash,
-                        portfolio_equity, current_exposure, target_exposure, reference_price,
-                        liquidity, hour_of_day, day_of_week, momentum_1h, momentum_4h,
-                        momentum_24h, volatility, reference_at, selected_rank)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                               ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        value.snapshot_id,
-                        value.experiment_id,
-                        value.decision_id,
-                        value.strategy_version,
-                        value.config_hash,
-                        value.decision_time.isoformat(),
-                        value.asset,
-                        value.market,
-                        value.action.value,
-                        value.reason,
-                        value.score,
-                        value.rank,
-                        int(value.eligible),
-                        int(value.selected),
-                        value.current_position,
-                        value.target_position,
-                        value.portfolio_cash,
-                        value.portfolio_equity,
-                        value.current_exposure,
-                        value.target_exposure,
-                        value.reference_price,
-                        value.liquidity,
-                        value.hour_of_day,
-                        value.day_of_week,
-                        value.momentum_1h,
-                        value.momentum_4h,
-                        value.momentum_24h,
-                        value.volatility,
-                        value.reference_at.isoformat() if value.reference_at else None,
-                        value.selected_rank,
-                    ),
-                )
-                inserted += cursor.rowcount
+                if (
+                    value.experiment_id != context.experiment_id
+                    or value.decision_id != context.decision_id
+                    or value.strategy_version != context.strategy_version
+                    or value.config_hash != context.config_hash
+                    or value.decision_time != context.decision_time
+                ):
+                    raise ValueError("decision snapshots and market context identities must match")
+        snapshot_ids = {value.snapshot_id for value in values}
+        if any(value.snapshot_id not in snapshot_ids for value in selection_variants):
+            raise ValueError("selection variants must reference a snapshot in the same bundle")
+        with self._connect() as connection:
+            inserted = self._insert_snapshots(connection, values)
+            if context is not None:
+                self._insert_market_context(connection, context)
+            self._insert_selection_variants(connection, selection_variants)
         return inserted
+
+    @staticmethod
+    def _insert_snapshots(
+        connection: sqlite3.Connection,
+        values: tuple[DecisionSnapshot, ...],
+    ) -> int:
+        inserted = 0
+        for value in values:
+            cursor = connection.execute(
+                """INSERT OR IGNORE INTO decision_snapshot
+                   (snapshot_id, experiment_id, decision_id, strategy_version, config_hash,
+                    decision_time, asset, market, action, reason, score, rank, eligible,
+                    selected, current_position, target_position, portfolio_cash,
+                    portfolio_equity, current_exposure, target_exposure, reference_price,
+                    liquidity, hour_of_day, day_of_week, momentum_1h, momentum_4h,
+                    momentum_24h, volatility, reference_at, selected_rank, raw_score,
+                    score_penalty, expected_relative_return_1h,
+                    expected_relative_return_4h, fee_adjusted_expected_return,
+                    candidate_reasons_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    value.snapshot_id,
+                    value.experiment_id,
+                    value.decision_id,
+                    value.strategy_version,
+                    value.config_hash,
+                    value.decision_time.isoformat(),
+                    value.asset,
+                    value.market,
+                    value.action.value,
+                    value.reason,
+                    value.score,
+                    value.rank,
+                    int(value.eligible),
+                    int(value.selected),
+                    value.current_position,
+                    value.target_position,
+                    value.portfolio_cash,
+                    value.portfolio_equity,
+                    value.current_exposure,
+                    value.target_exposure,
+                    value.reference_price,
+                    value.liquidity,
+                    value.hour_of_day,
+                    value.day_of_week,
+                    value.momentum_1h,
+                    value.momentum_4h,
+                    value.momentum_24h,
+                    value.volatility,
+                    value.reference_at.isoformat() if value.reference_at else None,
+                    value.selected_rank,
+                    value.raw_score,
+                    value.score_penalty,
+                    value.expected_relative_return_1h,
+                    value.expected_relative_return_4h,
+                    value.fee_adjusted_expected_return,
+                    value.candidate_reasons_json,
+                ),
+            )
+            inserted += cursor.rowcount
+        return inserted
+
+    @staticmethod
+    def _insert_selection_variants(
+        connection: sqlite3.Connection,
+        values: tuple[DecisionSelectionVariant, ...],
+    ) -> None:
+        for value in values:
+            connection.execute(
+                """INSERT OR IGNORE INTO decision_selection_variant
+                   (snapshot_id, variant_id, selected, target_position, reason)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (
+                    value.snapshot_id,
+                    value.variant_id,
+                    int(value.selected),
+                    value.target_position,
+                    value.reason,
+                ),
+            )
+
+    def save_market_context(self, value: DecisionMarketContext) -> bool:
+        with self._connect() as connection:
+            return self._insert_market_context(connection, value)
+
+    @staticmethod
+    def _insert_market_context(
+        connection: sqlite3.Connection,
+        value: DecisionMarketContext,
+    ) -> bool:
+        cursor = connection.execute(
+            """INSERT OR IGNORE INTO decision_market_context
+               (experiment_id, decision_id, strategy_version, config_hash,
+                decision_time, context_json)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                value.experiment_id,
+                value.decision_id,
+                value.strategy_version,
+                value.config_hash,
+                value.decision_time.isoformat(),
+                value.context_json,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def market_contexts(self, experiment_id: str) -> tuple[DecisionMarketContext, ...]:
+        self.experiment(experiment_id)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM decision_market_context WHERE experiment_id=?
+                   ORDER BY decision_time""",
+                (experiment_id,),
+            ).fetchall()
+        return tuple(
+            DecisionMarketContext(
+                str(row["experiment_id"]),
+                str(row["decision_id"]),
+                str(row["strategy_version"]),
+                str(row["config_hash"]),
+                datetime.fromisoformat(str(row["decision_time"])),
+                str(row["context_json"]),
+            )
+            for row in rows
+        )
 
     def snapshots(self, experiment_id: str) -> tuple[DecisionSnapshot, ...]:
         with self._connect() as connection:
@@ -251,11 +408,35 @@ class SqliteObservationRepository:
             ).fetchall()
         return tuple(self._snapshot(row) for row in rows)
 
+    def selection_variants(
+        self,
+        experiment_id: str,
+        variant_id: str | None = None,
+    ) -> tuple[DecisionSelectionVariant, ...]:
+        """Read counterfactual selections belonging to one immutable experiment lane."""
+        clauses = ["s.experiment_id=?"]
+        parameters: list[str] = [experiment_id]
+        if variant_id is not None:
+            clauses.append("v.variant_id=?")
+            parameters.append(variant_id)
+        where = " AND ".join(clauses)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT v.* FROM decision_selection_variant v
+                    JOIN decision_snapshot s ON s.snapshot_id=v.snapshot_id
+                    WHERE {where}
+                    ORDER BY s.decision_time, s.decision_id, s.market, v.variant_id""",
+                tuple(parameters),
+            ).fetchall()
+        return tuple(self._selection_variant(row) for row in rows)
+
     def save_outcome(self, value: DecisionOutcome) -> bool:
         with self._connect() as connection:
             cursor = connection.execute(
                 """INSERT OR IGNORE INTO decision_outcome_minute
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (snapshot_id, horizon_minutes, target_at, evaluated_at, status,
+                    forward_return, mfe, mae, missing_reason)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     value.snapshot_id,
                     value.horizon_minutes,
@@ -265,6 +446,7 @@ class SqliteObservationRepository:
                     value.forward_return,
                     value.mfe,
                     value.mae,
+                    value.missing_reason,
                 ),
             )
         return cursor.rowcount == 1
@@ -333,6 +515,22 @@ class SqliteObservationRepository:
             row["volatility"],
             datetime.fromisoformat(row["reference_at"]) if row["reference_at"] else None,
             row["selected_rank"],
+            row["raw_score"],
+            row["score_penalty"],
+            row["expected_relative_return_1h"],
+            row["expected_relative_return_4h"],
+            row["fee_adjusted_expected_return"],
+            str(row["candidate_reasons_json"]),
+        )
+
+    @staticmethod
+    def _selection_variant(row: sqlite3.Row) -> DecisionSelectionVariant:
+        return DecisionSelectionVariant(
+            str(row["snapshot_id"]),
+            str(row["variant_id"]),
+            bool(row["selected"]),
+            float(row["target_position"]),
+            str(row["reason"]),
         )
 
     @staticmethod
@@ -346,4 +544,5 @@ class SqliteObservationRepository:
             row["forward_return"],
             row["mfe"],
             row["mae"],
+            row["missing_reason"],
         )

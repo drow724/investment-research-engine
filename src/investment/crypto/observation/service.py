@@ -13,11 +13,14 @@ from investment.crypto.application.backtest_service import build_universe
 from investment.crypto.application.dynamic_paper_rebalance import (
     DynamicPaperRebalanceResult,
     DynamicUniversePolicy,
+    SelectionVariantResult,
 )
 from investment.crypto.domain.order import OrderSide
 from investment.crypto.observation.domain import (
     DecisionAction,
+    DecisionMarketContext,
     DecisionOutcome,
+    DecisionSelectionVariant,
     DecisionSnapshot,
     ObservationExperiment,
     ObservationStatus,
@@ -26,12 +29,19 @@ from investment.crypto.observation.domain import (
 from investment.crypto.observation.repository import SqliteObservationRepository
 from investment.crypto.ports.accounting import PaperPortfolioRepository
 from investment.crypto.ports.market_data import CryptoMarketDataProvider
+from investment.crypto.strategy_registry import strategy_policy_config_values
 
-HORIZON_MINUTES = (15, 30, 60, 240, 720, 1440)
+HORIZON_MINUTES = (15, 30, 60, 120, 240, 720, 1440)
+OUTCOME_DATA_GRACE = timedelta(minutes=30)
 
 
 def strategy_config_hash(policy: DynamicUniversePolicy) -> str:
-    payload = json.dumps(asdict(policy), sort_keys=True, separators=(",", ":"), default=str)
+    payload = json.dumps(
+        strategy_policy_config_values(policy),
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
@@ -42,11 +52,13 @@ class FrozenObservationService:
         paper_repository: PaperPortfolioRepository,
         market_data: CryptoMarketDataProvider,
         runtime_state_root: str | Path | None = None,
+        runtime_job_names: dict[str, str] | None = None,
     ) -> None:
         self.repository = repository
         self.paper_repository = paper_repository
         self.market_data = market_data
         self.runtime_state_root = Path(runtime_state_root) if runtime_state_root else None
+        self.runtime_job_names = dict(runtime_job_names or {})
 
     def start(
         self,
@@ -81,6 +93,44 @@ class FrozenObservationService:
         ):
             raise ValueError("existing observation identity does not match frozen strategy")
         return existing
+
+    def permits_execution(
+        self,
+        experiment_id: str,
+        portfolio_id: str,
+        policy: DynamicUniversePolicy,
+        *,
+        now: datetime,
+    ) -> bool:
+        """Check frozen identity and deadline BEFORE any paper order is submitted."""
+        current = require_utc(now, "now")
+        experiment = self.repository.experiment(experiment_id)
+        if experiment.status is not ObservationStatus.RUNNING:
+            return False
+        if (
+            experiment.portfolio_id != portfolio_id
+            or experiment.strategy_version != policy.strategy_version
+            or experiment.config_hash != strategy_config_hash(policy)
+        ):
+            self.repository.save_experiment(
+                replace(
+                    experiment,
+                    status=ObservationStatus.INVALIDATED,
+                    completed_at=current,
+                    interruption_reason="execution identity does not match frozen experiment",
+                )
+            )
+            raise ValueError("execution identity does not match frozen experiment")
+        if current >= experiment.planned_end_at:
+            self.repository.save_experiment(
+                replace(
+                    experiment,
+                    status=ObservationStatus.COMPLETED,
+                    completed_at=experiment.planned_end_at,
+                )
+            )
+            return False
+        return current >= experiment.started_at
 
     def capture(
         self,
@@ -124,7 +174,11 @@ class FrozenObservationService:
             current_weights[pair] = float(order.current_weight)
         current_cash = max(0.0, float(result.equity) * (1 - sum(current_weights.values())))
         has_sell = any(item.side is OrderSide.SELL for item in result.orders)
+        decision_id = hashlib.sha256(
+            f"{result.portfolio_id}:{result.as_of.isoformat()}:{policy.strategy_version}".encode()
+        ).hexdigest()[:24]
         snapshots = []
+        snapshot_ids_by_pair: dict[str, str] = {}
         for item in result.assessments:
             target = float(selected[item.pair].target_weight) if item.pair in selected else 0.0
             current = current_weights.get(item.pair, 0.0)
@@ -134,6 +188,7 @@ class FrozenObservationService:
                 current,
                 selected,
                 orders,
+                item.decision_reasons,
                 result.decision_reasons,
                 item.reason,
                 has_sell,
@@ -141,13 +196,12 @@ class FrozenObservationService:
             snapshot_id = hashlib.sha256(
                 f"{experiment_id}:{result.as_of.isoformat()}:{item.pair}".encode()
             ).hexdigest()[:32]
+            snapshot_ids_by_pair[item.pair] = snapshot_id
             snapshots.append(
                 DecisionSnapshot(
                     snapshot_id,
                     experiment_id,
-                    hashlib.sha256(
-                        f"{result.portfolio_id}:{result.as_of.isoformat()}:{policy.strategy_version}".encode()
-                    ).hexdigest()[:24],
+                    decision_id,
                     experiment.strategy_version,
                     experiment.config_hash,
                     result.as_of,
@@ -177,9 +231,78 @@ class FrozenObservationService:
                     item.volatility,
                     item.reference_at,
                     ranks.get(item.pair) if item.pair in selected else None,
+                    item.raw_score,
+                    item.score_penalty,
+                    item.expected_relative_return_1h,
+                    item.expected_relative_return_4h,
+                    item.fee_adjusted_expected_return,
+                    json.dumps(list(item.decision_reasons), separators=(",", ":")),
                 )
             )
-        return self.repository.save_snapshots(tuple(snapshots))
+        market_context = (
+            DecisionMarketContext(
+                experiment_id,
+                decision_id,
+                experiment.strategy_version,
+                experiment.config_hash,
+                result.as_of,
+                json.dumps(
+                    {
+                        **result.derivatives_overlay.to_dict(),
+                        "decisionDiagnostics": result.decision_diagnostics or {},
+                        "executionModelVersion": result.execution_model_version,
+                        "feeRate": str(result.execution_fee_rate),
+                        "slippageRate": str(result.execution_slippage_rate),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            )
+            if result.derivatives_overlay is not None
+            else None
+        )
+        selection_variants = self._selection_variant_rows(
+            result.selection_variants,
+            snapshot_ids_by_pair,
+        )
+        return self.repository.save_decision_bundle(
+            tuple(snapshots),
+            market_context,
+            selection_variants,
+        )
+
+    @staticmethod
+    def _selection_variant_rows(
+        variants: tuple[SelectionVariantResult, ...],
+        snapshot_ids_by_pair: dict[str, str],
+    ) -> tuple[DecisionSelectionVariant, ...]:
+        """Expand a cohort-level control into one immutable row per candidate."""
+        variant_ids = [variant.variant_id for variant in variants]
+        if len(set(variant_ids)) != len(variant_ids):
+            raise ValueError("selection variant identifiers must be unique within a cohort")
+        rows = []
+        for variant in variants:
+            selected_by_pair = {item.pair: item for item in variant.selected}
+            if len(selected_by_pair) != len(variant.selected):
+                raise ValueError("selection variant cannot select the same pair twice")
+            unknown_pairs = set(selected_by_pair).difference(snapshot_ids_by_pair)
+            if unknown_pairs:
+                raise ValueError(
+                    "selection variant references a pair outside the frozen cohort: "
+                    f"{sorted(unknown_pairs)}"
+                )
+            for pair, snapshot_id in snapshot_ids_by_pair.items():
+                target = selected_by_pair.get(pair)
+                rows.append(
+                    DecisionSelectionVariant(
+                        snapshot_id,
+                        variant.variant_id,
+                        target is not None,
+                        float(target.target_weight) if target is not None else 0.0,
+                        target.reason if target is not None else "NOT_SELECTED_BY_VARIANT",
+                    )
+                )
+        return tuple(rows)
 
     def interrupt(
         self,
@@ -230,6 +353,13 @@ class FrozenObservationService:
                 if key in existing or evaluated_at < target:
                     continue
                 outcome = self._outcome(snapshot, horizon, target, evaluated_at)
+                # Collection and evaluation are separate jobs. Do not permanently
+                # classify a transient sync delay as missing market data.
+                if (
+                    outcome.status is OutcomeStatus.MISSING_DATA
+                    and evaluated_at < target + OUTCOME_DATA_GRACE
+                ):
+                    continue
                 inserted += self.repository.save_outcome(outcome)
         return inserted
 
@@ -237,7 +367,7 @@ class FrozenObservationService:
         current = require_utc(now or datetime.now(UTC), "now")
         experiment = self.repository.experiment(experiment_id)
         counts = self.repository.health_counts(experiment_id, current)
-        observed_until = min(current, experiment.planned_end_at)
+        observed_until = self._effective_end(experiment, current)
         expected = max(0, int((observed_until - experiment.started_at).total_seconds() // 900))
         runtime = self._runtime_health(experiment)
         return {
@@ -248,11 +378,15 @@ class FrozenObservationService:
             "missingDecisionCycles": max(0, expected - counts["actualDecisionCycles"]),
             "candidateSnapshots": counts["candidateSnapshots"],
             "outcomeRows": counts["outcomeRows"],
-            "outcomeEvaluationBacklog": max(
-                0, counts["maturedOutcomes"] - counts["outcomeRows"]
-            ),
+            "outcomeEvaluationBacklog": max(0, counts["maturedOutcomes"] - counts["outcomeRows"]),
             "missingDataOutcomes": counts["missingDataOutcomes"],
             "unresolvedDecisions": counts["unresolvedDecisions"],
+            "quarantinedMarkets": sorted(
+                item.market
+                for item in self.repository.latest_snapshots(experiment_id)
+                if item.reason == "STALE_MARKET_DATA"
+            ),
+            "missingDataByReason": self.repository.missing_reason_counts(experiment_id),
             **runtime,
         }
 
@@ -261,12 +395,13 @@ class FrozenObservationService:
         experiment = self.repository.experiment(experiment_id)
         snapshots = self.repository.snapshots(experiment_id)
         outcomes = self.repository.outcomes(experiment_id)
+        effective_end = self._effective_end(experiment, current)
         decision_equity = self._decision_equity(snapshots)
         ending_equity = decision_equity[-1] if decision_equity else experiment.starting_equity
         executions = tuple(
             item
             for item in self.paper_repository.list_executions(experiment.portfolio_id, 10_000)
-            if experiment.started_at <= item.executed_at <= min(current, experiment.planned_end_at)
+            if experiment.started_at <= item.executed_at <= effective_end
         )
         sells = tuple(item for item in executions if item.side is OrderSide.SELL)
         fees = sum(float(item.fee) for item in executions)
@@ -274,17 +409,12 @@ class FrozenObservationService:
         winners = [item for item in realized if item > 0]
         losers = [item for item in realized if item < 0]
         net_pnl = ending_equity - experiment.starting_equity
-        btc_return = self._benchmark_return(
-            experiment.started_at, min(current, experiment.planned_end_at)
-        )
+        btc_return = self._benchmark_return(experiment.started_at, effective_end)
         net_return = net_pnl / experiment.starting_equity if experiment.starting_equity else 0.0
         return {
             "experiment": {
                 "experimentId": experiment.experiment_id,
-                "durationHours": (
-                    min(current, experiment.planned_end_at) - experiment.started_at
-                ).total_seconds()
-                / 3600,
+                "durationHours": (effective_end - experiment.started_at).total_seconds() / 3600,
                 "strategyVersion": experiment.strategy_version,
                 "configHash": experiment.config_hash,
                 **self.health(experiment_id, now=current),
@@ -345,17 +475,21 @@ class FrozenObservationService:
         decision_times = sorted({item.decision_time for item in snapshots}, reverse=True)[:8]
         recent = tuple(item for item in snapshots if item.decision_time in decision_times)
         recent_ids = {item.snapshot_id for item in recent}
+        recent_contexts = tuple(
+            item
+            for item in self.repository.market_contexts(experiment_id)
+            if item.decision_time in decision_times
+        )
         latest_outcomes: dict[str, dict[str, dict[str, Any]]] = {}
         for outcome in outcomes:
             if outcome.snapshot_id not in recent_ids:
                 continue
-            latest_outcomes.setdefault(outcome.snapshot_id, {})[
-                str(outcome.horizon_minutes)
-            ] = {
+            latest_outcomes.setdefault(outcome.snapshot_id, {})[str(outcome.horizon_minutes)] = {
                 "status": outcome.status.value,
                 "forwardReturn": outcome.forward_return,
                 "mfe": outcome.mfe,
                 "mae": outcome.mae,
+                "missingReason": outcome.missing_reason,
             }
         return {
             "experiment": {
@@ -367,10 +501,29 @@ class FrozenObservationService:
             },
             "latestDecisionTime": latest[0].decision_time if latest else None,
             "decisionTimes": decision_times,
+            "recentMarketContexts": [
+                {
+                    "decisionId": item.decision_id,
+                    "decisionTime": item.decision_time,
+                    "context": json.loads(item.context_json),
+                }
+                for item in sorted(
+                    recent_contexts,
+                    key=lambda value: value.decision_time,
+                    reverse=True,
+                )
+            ],
             "recentCandidates": [
                 {
                     **asdict(item),
                     "action": item.action.value,
+                    "decisionAt": item.decision_time,
+                    "referenceAt": item.reference_at,
+                    "referenceAgeSeconds": (
+                        (item.decision_time - item.reference_at).total_seconds()
+                        if item.reference_at is not None
+                        else None
+                    ),
                     "outcomes": latest_outcomes.get(item.snapshot_id, {}),
                 }
                 for item in sorted(
@@ -392,6 +545,7 @@ class FrozenObservationService:
         self, snapshot: DecisionSnapshot, horizon: int, target: datetime, evaluated_at: datetime
     ) -> DecisionOutcome:
         pair = build_universe((f"{snapshot.asset}/KRW",)).pairs[0]
+        missing_reason = "NO_POST_DECISION_CANDLE"
         try:
             bundle = self.market_data.fetch(
                 build_universe((f"{snapshot.asset}/KRW",)),
@@ -403,9 +557,15 @@ class FrozenObservationService:
                 for item in bundle.candles[pair.symbol]
                 if snapshot.decision_time < item.available_at <= target
             )
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError:
+            missing_reason = "MARKET_DATA_FILE_NOT_FOUND"
             candles = ()
-        if not candles or target - candles[-1].available_at > timedelta(minutes=30):
+        except ValueError:
+            missing_reason = "MARKET_DATA_INVALID"
+            candles = ()
+        if candles and target - candles[-1].available_at > timedelta(minutes=30):
+            missing_reason = "TARGET_CANDLE_STALE"
+        if not candles or missing_reason == "TARGET_CANDLE_STALE":
             return DecisionOutcome(
                 snapshot.snapshot_id,
                 horizon,
@@ -415,6 +575,7 @@ class FrozenObservationService:
                 None,
                 None,
                 None,
+                missing_reason,
             )
         reference = float(snapshot.reference_price or 0)
         return DecisionOutcome(
@@ -456,7 +617,8 @@ class FrozenObservationService:
         current: float,
         selected: dict[str, Any],
         orders: dict[str, Any],
-        reasons: tuple[str, ...],
+        candidate_reasons: tuple[str, ...],
+        global_reasons: tuple[str, ...],
         assessment_reason: str,
         has_sell: bool,
     ) -> tuple[DecisionAction, str]:
@@ -471,12 +633,16 @@ class FrozenObservationService:
         if pair in selected:
             if current > 0:
                 return DecisionAction.HOLD, selected[pair].reason
-            return DecisionAction.REJECTED_ENTRY, "|".join(reasons) or "ORDER_NOT_CREATED"
+            selected_reasons = candidate_reasons or global_reasons
+            return (
+                DecisionAction.REJECTED_ENTRY,
+                "|".join(selected_reasons) or "ORDER_NOT_CREATED",
+            )
         if eligible:
-            joined = "|".join(reasons) or "NOT_SELECTED_BY_RANK"
+            joined = "|".join(candidate_reasons) or "NOT_SELECTED_BY_RANK"
             action = (
                 DecisionAction.REJECTED_REPLACEMENT
-                if "REPLACEMENT_SCORE_ADVANTAGE_INSUFFICIENT" in reasons and current == 0
+                if "REPLACEMENT_SCORE_ADVANTAGE_INSUFFICIENT" in candidate_reasons and current == 0
                 else DecisionAction.REJECTED_ENTRY
             )
             return action, joined
@@ -530,30 +696,38 @@ class FrozenObservationService:
                 "reconciliationErrors": 0,
             }
         executions = []
+        effective_end = self._effective_end(experiment, datetime.now(UTC))
         for path in (self.runtime_state_root / "executions").glob("*.json"):
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
                 scheduled = datetime.fromisoformat(value["scheduled_at"])
             except (OSError, ValueError, KeyError, json.JSONDecodeError):
                 continue
-            if experiment.started_at <= scheduled <= experiment.planned_end_at:
+            if experiment.started_at <= scheduled <= effective_end:
                 executions.append(value)
-        failed = [item for item in executions if item.get("status") == "FAILED"]
+        lane_job_name = self.runtime_job_names.get(
+            experiment.strategy_version,
+            "crypto_dynamic_paper_rebalance",
+        )
+        lane_executions = [item for item in executions if item.get("job_name") == lane_job_name]
+        failed = [item for item in lane_executions if item.get("status") == "FAILED"]
         return {
-            "failedCycles": sum(
-                item.get("job_name") == "crypto_dynamic_paper_rebalance" for item in failed
-            ),
+            "failedCycles": len(failed),
             "runtimeErrors": len(failed),
             "duplicateExecutionAttempts": sum(
-                item.get("status") == "SKIPPED_DUPLICATE" for item in executions
+                item.get("status") == "SKIPPED_DUPLICATE" for item in lane_executions
             ),
             "lockContentionSkips": sum(
-                item.get("status") == "SKIPPED_LOCKED" for item in executions
+                item.get("status") == "SKIPPED_LOCKED" for item in lane_executions
             ),
             "reconciliationErrors": sum(
                 "reconciliation" in str(item.get("job_name", "")) for item in failed
             ),
         }
+
+    @staticmethod
+    def _effective_end(experiment: ObservationExperiment, current: datetime) -> datetime:
+        return min(current, experiment.completed_at or experiment.planned_end_at)
 
     @staticmethod
     def _group_analysis(
@@ -617,9 +791,7 @@ class FrozenObservationService:
             ):
                 continue
             cohort = "selected" if snapshot.selected else "eligible-not-selected"
-            groups.setdefault((outcome.horizon_minutes, cohort), []).append(
-                outcome.forward_return
-            )
+            groups.setdefault((outcome.horizon_minutes, cohort), []).append(outcome.forward_return)
         return [
             {
                 "horizonMinutes": horizon,
@@ -682,9 +854,7 @@ class FrozenObservationService:
             ):
                 continue
             decile = min(10, ((snapshot.rank - 1) * 10 // count) + 1)
-            groups.setdefault((outcome.horizon_minutes, decile), []).append(
-                outcome.forward_return
-            )
+            groups.setdefault((outcome.horizon_minutes, decile), []).append(outcome.forward_return)
         return [
             {
                 "horizonMinutes": horizon,

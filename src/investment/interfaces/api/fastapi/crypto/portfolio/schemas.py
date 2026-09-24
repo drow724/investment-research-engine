@@ -40,6 +40,9 @@ class PaperExecutionResponse(CryptoApiModel):
     fee: str
     realized_pnl: str
     executed_at: datetime
+    execution_model_version: str
+    fee_rate: str
+    slippage_rate: str
 
 
 class PaperRebalanceDecisionResponse(CryptoApiModel):
@@ -54,6 +57,7 @@ class PaperRebalanceDecisionResponse(CryptoApiModel):
     orders: list[dict[str, object]]
     risk_violations: tuple[str, ...]
     decision_reasons: tuple[str, ...]
+    market_context: dict[str, object]
     status: str
     created_at: datetime
 
@@ -78,6 +82,17 @@ class CandidateAssessmentResponse(CryptoApiModel):
     score: float | None
     average_quote_volume: str | None
     latest_price: str | None
+    raw_score: float | None = None
+    score_penalty: float | None = None
+    expected_relative_return_1h: float | None = None
+    expected_relative_return_4h: float | None = None
+    fee_adjusted_expected_return: float | None = None
+    decision_reasons: tuple[str, ...] = ()
+    reference_at: datetime | None = None
+    reference_age_seconds: float | None = None
+    candidate_confirmation_count: int = 0
+    entry_signal_eligible: bool = False
+    entry_eligible_confirmation_count: int = 0
 
 
 class SelectedAssetResponse(CryptoApiModel):
@@ -111,3 +126,4 @@ class DynamicRebalanceResponse(CryptoApiModel):
     final_portfolio: PaperPortfolioResponse
     risk_violations: tuple[str, ...] = ()
     decision_reasons: tuple[str, ...] = ()
+    derivatives_overlay: dict[str, object] | None = None

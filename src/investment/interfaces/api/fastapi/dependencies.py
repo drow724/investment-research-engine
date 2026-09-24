@@ -1,6 +1,8 @@
 """Composition root for HTTP adapter dependencies."""
 
-from fastapi import Depends
+from decimal import Decimal
+
+from fastapi import Depends, Request
 
 from investment.application.services.experiment_service import ExperimentService
 from investment.application.services.health_service import HealthService
@@ -15,6 +17,7 @@ from investment.core.research.experiment import ExperimentRegistry
 from investment.crypto.application.backtest_service import CryptoBacktestService
 from investment.crypto.application.dynamic_paper_rebalance import (
     DynamicPaperRebalanceService,
+    dynamic_policy_for_version,
 )
 from investment.crypto.application.intraday_service import (
     CryptoIntradayBacktestService,
@@ -140,24 +143,47 @@ def get_crypto_universe_service(
 
 
 def get_paper_trading_service(
+    request: Request,
     settings: Settings = Depends(get_settings),
 ) -> PaperTradingService:
     return PaperTradingService(
         PaperExchangeGateway({}),
-        SqlitePaperPortfolioRepository(settings.crypto_paper_database),
+        _paper_repository(request, settings),
     )
 
 
 def get_dynamic_paper_rebalance_service(
+    request: Request,
     settings: Settings = Depends(get_settings),
 ) -> DynamicPaperRebalanceService:
     history = UniverseSnapshotStorage(settings.crypto_universe_root).load()
     return DynamicPaperRebalanceService(
         history,
         ParquetCryptoMarketDataProvider(settings.crypto_price_root, CandleTimeframe.MINUTE_15),
-        SqlitePaperPortfolioRepository(settings.crypto_paper_database),
-        PaperExchangeGatewayFactory(),
+        _paper_repository(request, settings),
+        PaperExchangeGatewayFactory(
+            fee_rate=(
+                policy := dynamic_policy_for_version(settings.runtime_dynamic_strategy_version)
+            ).exchange_fee_rate,
+            slippage_rate=(
+                policy.estimated_slippage_rate
+                if settings.runtime_paper_execution_model_version == "paper-fill-v2"
+                else Decimal("0")
+            ),
+            execution_model_version=settings.runtime_paper_execution_model_version,
+        ),
+        policy,
     )
+
+
+def _paper_repository(
+    request: Request, settings: Settings
+) -> SqlitePaperPortfolioRepository:
+    """Reuse the lifespan-owned ledger instead of initializing SQLite per request."""
+    repository = getattr(request.app.state, "paper_repository", None)
+    if isinstance(repository, SqlitePaperPortfolioRepository):
+        return repository
+    return SqlitePaperPortfolioRepository(settings.crypto_paper_database)
 
 
 def get_crypto_ml_service(settings: Settings = Depends(get_settings)) -> CryptoMLService:

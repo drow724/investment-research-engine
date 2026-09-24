@@ -24,7 +24,9 @@ from investment.interfaces.api.fastapi.crypto.portfolio.schemas import (
 from investment.interfaces.api.fastapi.dependencies import (
     get_dynamic_paper_rebalance_service,
     get_paper_trading_service,
+    get_settings,
 )
+from investment.interfaces.api.fastapi.settings import Settings
 
 router = APIRouter(prefix="/crypto/paper/portfolios", tags=["crypto-paper-portfolio"])
 
@@ -33,10 +35,35 @@ router = APIRouter(prefix="/crypto/paper/portfolios", tags=["crypto-paper-portfo
 def dynamic_rebalance(
     request: DynamicRebalanceRequest,
     service: DynamicPaperRebalanceService = Depends(get_dynamic_paper_rebalance_service),
+    settings: Settings = Depends(get_settings),
 ) -> DynamicRebalanceResponse:
+    suite_prefixes = (
+        settings.runtime_v28_paper_experiment_prefix,
+        settings.runtime_v29_paper_experiment_prefix,
+    )
+    if any(
+        prefix and request.portfolio_id.startswith(f"{prefix}-")
+        for prefix in suite_prefixes
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "suite portfolios must run through the frozen experiment scheduler",
+        )
+    if request.portfolio_id == settings.runtime_shadow_dynamic_paper_portfolio_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "the V2.4 shadow portfolio must be evaluated by "
+            "crypto_dynamic_paper_shadow_rebalance so its frozen policy and observation "
+            "identity cannot be mixed with the primary strategy",
+        )
     try:
         result = service.run(
-            DynamicPaperRebalanceCommand(request.portfolio_id, request.as_of, request.execute)
+            DynamicPaperRebalanceCommand(
+                request.portfolio_id,
+                request.as_of,
+                request.execute,
+                persist_decision=request.execute,
+            )
         )
     except (FileNotFoundError, KeyError) as error:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
@@ -69,6 +96,17 @@ def dynamic_rebalance(
                     else None
                 ),
                 latest_price=(str(item.latest_price) if item.latest_price is not None else None),
+                raw_score=item.raw_score,
+                score_penalty=item.score_penalty,
+                expected_relative_return_1h=item.expected_relative_return_1h,
+                expected_relative_return_4h=item.expected_relative_return_4h,
+                fee_adjusted_expected_return=item.fee_adjusted_expected_return,
+                decision_reasons=item.decision_reasons,
+                reference_at=item.reference_at,
+                reference_age_seconds=item.reference_age_seconds,
+                candidate_confirmation_count=item.candidate_confirmation_count,
+                entry_signal_eligible=item.entry_signal_eligible,
+                entry_eligible_confirmation_count=item.entry_eligible_confirmation_count,
             )
             for item in result.assessments
         ),
@@ -89,6 +127,9 @@ def dynamic_rebalance(
         final_portfolio=_response(result.final_portfolio),
         risk_violations=result.risk_violations,
         decision_reasons=result.decision_reasons,
+        derivatives_overlay=(
+            result.derivatives_overlay.to_dict() if result.derivatives_overlay is not None else None
+        ),
     )
 
 
@@ -144,6 +185,9 @@ def get_portfolio_executions(
             fee=str(item.fee),
             realized_pnl=str(item.realized_pnl),
             executed_at=item.executed_at,
+            execution_model_version=item.execution_model_version,
+            fee_rate=str(item.fee_rate),
+            slippage_rate=str(item.slippage_rate),
         )
         for item in records
     )
@@ -175,6 +219,7 @@ def get_rebalance_decisions(
             orders=json.loads(item.orders_json),
             risk_violations=item.risk_violations,
             decision_reasons=item.decision_reasons,
+            market_context=json.loads(item.market_context_json),
             status=item.status,
             created_at=item.created_at,
         )

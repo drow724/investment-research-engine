@@ -1,5 +1,6 @@
 """Point-in-time observation models kept outside the trading decision path."""
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -84,11 +85,47 @@ class DecisionSnapshot:
     volatility: float | None = None
     reference_at: datetime | None = None
     selected_rank: int | None = None
+    raw_score: float | None = None
+    score_penalty: float | None = None
+    expected_relative_return_1h: float | None = None
+    expected_relative_return_4h: float | None = None
+    fee_adjusted_expected_return: float | None = None
+    candidate_reasons_json: str = "[]"
 
     def __post_init__(self) -> None:
         require_utc(self.decision_time, "decision_time")
         if self.reference_at is not None:
             require_utc(self.reference_at, "reference_at")
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionSelectionVariant:
+    """One counterfactual selection flag for a frozen candidate snapshot."""
+
+    snapshot_id: str
+    variant_id: str
+    selected: bool
+    target_position: float
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.snapshot_id.strip() or not self.variant_id.strip() or not self.reason.strip():
+            raise ValueError("selection variant identifiers and reason must be non-empty")
+        if not math.isfinite(self.target_position) or not 0.0 <= self.target_position <= 1.0:
+            raise ValueError("selection variant target position must be finite and within [0, 1]")
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionMarketContext:
+    experiment_id: str
+    decision_id: str
+    strategy_version: str
+    config_hash: str
+    decision_time: datetime
+    context_json: str
+
+    def __post_init__(self) -> None:
+        require_utc(self.decision_time, "decision_time")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +138,7 @@ class DecisionOutcome:
     forward_return: float | None
     mfe: float | None
     mae: float | None
+    missing_reason: str | None = None
 
     def __post_init__(self) -> None:
         require_utc(self.target_at, "target_at")

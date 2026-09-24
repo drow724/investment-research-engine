@@ -20,10 +20,14 @@ data/features/*
 data/paper/*
 data/observations/*
 data/backups/
+data/recovery/
+data/*.sqlite3
 models/
 artifacts/
 experiments/output/
+experiments/research/
 runtime/state/
+experiments/strategy-review/
 *.zip
 
 # Keep directory placeholders

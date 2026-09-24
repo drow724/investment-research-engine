@@ -38,6 +38,9 @@ class PaperExecutionRecord:
     fee: Decimal
     realized_pnl: Decimal
     executed_at: datetime
+    execution_model_version: str = "paper-fill-v1"
+    fee_rate: Decimal = Decimal("0.0005")
+    slippage_rate: Decimal = Decimal("0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,3 +59,4 @@ class PaperRebalanceDecisionRecord:
     decision_reasons: tuple[str, ...]
     status: str
     created_at: datetime
+    market_context_json: str = "{}"

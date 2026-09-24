@@ -52,7 +52,7 @@ def test_health_and_openapi_contract() -> None:
     assert response.json() == {
         "status": "UP",
         "service": "investment-research-engine",
-        "version": "0.16.0",
+        "version": "0.18.0",
     }
     schema = client.get("/api/v1/openapi.json").json()
     assert "/api/v1/bitcoin/research/features/evaluate" in schema["paths"]
@@ -71,6 +71,7 @@ def test_health_and_openapi_contract() -> None:
     assert "/api/v1/crypto/paper/portfolios/dynamic-rebalance" in schema["paths"]
     assert "/api/v1/crypto/paper/portfolios/{portfolio_id}/executions" in schema["paths"]
     assert "/api/v1/crypto/paper/portfolios/{portfolio_id}/rebalance-decisions" in schema["paths"]
+    assert "post" in schema["paths"]["/api/v1/experiments"]
 
 
 def test_bitcoin_endpoint_contracts() -> None:

@@ -4,6 +4,8 @@ import sqlite3
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from threading import RLock
+from typing import ClassVar
 
 from investment.crypto.domain.accounting import (
     PaperExecutionRecord,
@@ -18,15 +20,39 @@ from investment.crypto.ports.exchange import ExecutionReport
 
 
 class SqlitePaperPortfolioRepository:
+    """SQLite Paper ledger with process-local, once-only schema initialization.
+
+    FastAPI creates a lightweight repository for read-only portfolio requests. Schema
+    migration must happen during process startup, not on every dashboard refresh where
+    it can contend with an in-flight Paper execution transaction.
+    """
+
+    _initialization_guard: ClassVar[RLock] = RLock()
+    _initialized_database_ids: ClassVar[set[tuple[str, int]]] = set()
+
     def __init__(self, path: str | Path = "data/paper/crypto-trading.sqlite3") -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        with self._initialization_guard:
+            database_id = self._database_id()
+            if database_id not in self._initialized_database_ids:
+                self._initialize()
+                self._initialized_database_ids.add(self._database_id())
+
+    def _database_id(self) -> tuple[str, int]:
+        """Use inode as well as path so a replaced database reinitializes."""
+        resolved = self.path.resolve()
+        try:
+            inode = resolved.stat().st_ino
+        except FileNotFoundError:
+            inode = -1
+        return str(resolved), inode
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path)
+        connection = sqlite3.connect(self.path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 5000")
         return connection
 
     def _initialize(self) -> None:
@@ -60,6 +86,9 @@ class SqlitePaperPortfolioRepository:
                     fee TEXT NOT NULL,
                     realized_pnl TEXT NOT NULL,
                     executed_at TEXT NOT NULL,
+                    execution_model_version TEXT NOT NULL DEFAULT 'paper-fill-v1',
+                    fee_rate TEXT NOT NULL DEFAULT '0.0005',
+                    slippage_rate TEXT NOT NULL DEFAULT '0',
                     FOREIGN KEY (portfolio_id) REFERENCES paper_portfolio(portfolio_id)
                 );
                 CREATE TABLE IF NOT EXISTS paper_rebalance_decision (
@@ -75,14 +104,12 @@ class SqlitePaperPortfolioRepository:
                     orders_json TEXT NOT NULL,
                     risk_violations_json TEXT NOT NULL,
                     decision_reasons_json TEXT NOT NULL DEFAULT '[]',
+                    market_context_json TEXT NOT NULL DEFAULT '{}',
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (portfolio_id) REFERENCES paper_portfolio(portfolio_id)
                 );
                 """
-            )
-            connection.execute(
-                "DELETE FROM paper_position WHERE abs(CAST(quantity AS REAL)) < 1e-18"
             )
             columns = {
                 str(row["name"])
@@ -93,6 +120,23 @@ class SqlitePaperPortfolioRepository:
                     "ALTER TABLE paper_rebalance_decision "
                     "ADD COLUMN decision_reasons_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "market_context_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE paper_rebalance_decision "
+                    "ADD COLUMN market_context_json TEXT NOT NULL DEFAULT '{}'"
+                )
+            execution_columns = {
+                str(row["name"]) for row in connection.execute("PRAGMA table_info(paper_execution)")
+            }
+            for name, declaration in (
+                ("execution_model_version", "TEXT NOT NULL DEFAULT 'paper-fill-v1'"),
+                ("fee_rate", "TEXT NOT NULL DEFAULT '0.0005'"),
+                ("slippage_rate", "TEXT NOT NULL DEFAULT '0'"),
+            ):
+                if name not in execution_columns:
+                    connection.execute(
+                        f"ALTER TABLE paper_execution ADD COLUMN {name} {declaration}"
+                    )
 
     def create(self, portfolio: TradingPortfolio) -> PaperPortfolioSnapshot:
         if portfolio.positions:
@@ -190,8 +234,8 @@ class SqlitePaperPortfolioRepository:
             connection.execute(
                 """INSERT INTO paper_execution
                    (order_id, intent_id, portfolio_id, pair, side, quantity, price, fee,
-                    realized_pnl, executed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    realized_pnl, executed_at, execution_model_version, fee_rate, slippage_rate)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     report.order_id,
                     intent.intent_id,
@@ -203,6 +247,9 @@ class SqlitePaperPortfolioRepository:
                     str(report.fee),
                     str(realized_pnl),
                     report.executed_at.isoformat(),
+                    report.execution_model_version,
+                    str(report.fee_rate),
+                    str(report.slippage_rate),
                 ),
             )
         return True
@@ -282,6 +329,9 @@ class SqlitePaperPortfolioRepository:
                 Decimal(row["fee"]),
                 Decimal(row["realized_pnl"]),
                 datetime.fromisoformat(row["executed_at"]),
+                str(row["execution_model_version"]),
+                Decimal(row["fee_rate"]),
+                Decimal(row["slippage_rate"]),
             )
             for row in rows
         )
@@ -294,8 +344,9 @@ class SqlitePaperPortfolioRepository:
                 """INSERT OR IGNORE INTO paper_rebalance_decision
                    (decision_id, portfolio_id, strategy_version, as_of, universe_observed_at,
                     execute, equity, assessments_json, selected_json, orders_json,
-                    risk_violations_json, decision_reasons_json, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    risk_violations_json, decision_reasons_json, market_context_json,
+                    status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     decision.decision_id,
                     decision.portfolio_id,
@@ -309,6 +360,7 @@ class SqlitePaperPortfolioRepository:
                     decision.orders_json,
                     json.dumps(decision.risk_violations),
                     json.dumps(decision.decision_reasons),
+                    decision.market_context_json,
                     decision.status,
                     decision.created_at.isoformat(),
                 ),
@@ -344,6 +396,7 @@ class SqlitePaperPortfolioRepository:
                 tuple(json.loads(row["decision_reasons_json"])),
                 str(row["status"]),
                 datetime.fromisoformat(row["created_at"]),
+                str(row["market_context_json"]),
             )
             for row in rows
         )

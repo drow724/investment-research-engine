@@ -1,6 +1,7 @@
 """15-minute data sync and personal-frequency backtest vertical slice."""
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -88,7 +89,12 @@ class CryptoIntradayMarketDataService:
         throttle_seconds: float = 0.12,
         bootstrap_lookback_hours: int = 10 * 24,
         minimum_history_bars: int = 7 * 24 * 4,
+        maximum_duration_seconds: float | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> tuple[IntradayPairSyncResult, ...]:
+        if maximum_duration_seconds is not None and maximum_duration_seconds <= 0:
+            raise ValueError("maximum_duration_seconds must be positive")
+        started_at = monotonic()
         eligible = {
             f"{member.pair.quote.symbol}-{member.pair.base.symbol}": member.pair
             for member in snapshot.members
@@ -99,7 +105,22 @@ class CryptoIntradayMarketDataService:
             f"{eligible[item.market].base.symbol}/KRW" for item in ranked[:maximum_assets]
         )
         results: list[IntradayPairSyncResult] = []
-        for pair in pairs:
+        for index, pair in enumerate(pairs):
+            if (
+                maximum_duration_seconds is not None
+                and monotonic() - started_at >= maximum_duration_seconds
+            ):
+                results.extend(
+                    IntradayPairSyncResult(
+                        pending_pair,
+                        timeframe,
+                        0,
+                        "DEFERRED",
+                        "intraday sync time budget exhausted before request",
+                    )
+                    for pending_pair in pairs[index:]
+                )
+                break
             trading_pair = build_universe((pair,)).pairs[0]
             effective_start = (
                 start
@@ -107,7 +128,7 @@ class CryptoIntradayMarketDataService:
                 else min(start, end - timedelta(hours=bootstrap_lookback_hours))
             )
             results.extend(self.sync_pairs((pair,), effective_start, end, timeframe))
-            if throttle_seconds:
+            if throttle_seconds and index + 1 < len(pairs):
                 time.sleep(throttle_seconds)
         return tuple(results)
 

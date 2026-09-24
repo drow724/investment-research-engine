@@ -71,9 +71,7 @@ class RuntimeStateService:
         lock_ttl_seconds: int | None = None,
         execution_identity: str | None = None,
     ) -> ResearchJobExecution:
-        execution = ResearchJobExecution.scheduled(
-            job_name, execution_identity=execution_identity
-        )
+        execution = ResearchJobExecution.scheduled(job_name, execution_identity=execution_identity)
         self._repository.save_execution(execution)
         self._publish(EventType.JOB_SCHEDULED, execution)
         scope = lock_key or job_name
