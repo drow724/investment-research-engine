@@ -21,9 +21,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast, get_args, get_type_hints
 
+import psycopg
+
 from investment.crypto.application.dynamic_paper_rebalance import DynamicUniversePolicy
 from investment.crypto.observation.service import strategy_config_hash
 from investment.crypto.strategy_registry import StrategyConfigError, StrategyRegistry, write_policy
+from investment.database.postgres import postgres_connection
 
 REVIEW_ARTIFACT_SCHEMA_VERSION = 1
 SUPPORTED_ANALYSIS_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4, 5})
@@ -130,12 +133,16 @@ class StrategyReviewWorkflow:
         review_root: str | Path = DEFAULT_REVIEW_ROOT,
         observation_database: str | Path,
         paper_database: str | Path,
+        database_url: str | None = None,
+        database_schema: str = "investment",
     ) -> None:
         self.registry = StrategyRegistry(registry_root)
         self.registry_root = Path(registry_root).resolve()
         self.review_root = Path(review_root).resolve()
         self.observation_database = Path(observation_database).resolve()
         self.paper_database = Path(paper_database).resolve()
+        self.database_url = database_url
+        self.database_schema = database_schema
         self.analyses_root = self.review_root / "analyses"
         self.candidates_root = self.review_root / "candidates"
         self.proposals_root = self.review_root / "proposals"
@@ -404,7 +411,7 @@ class StrategyReviewWorkflow:
             return _publish_json(promotion_path, artifact, stable_fields=("createdAt",))
         for experiment_id in drain_ids:
             if (
-                _read_one(
+                self._read_one(
                     self.observation_database,
                     "SELECT 1 FROM observation_experiment WHERE experiment_id = ?",
                     (experiment_id,),
@@ -574,7 +581,7 @@ class StrategyReviewWorkflow:
             raise StrategyReviewError(f"invalid candidate snapshot: {exc}") from exc
 
     def _verify_observation_experiment(self, experiment: Mapping[str, str]) -> None:
-        row = _read_one(
+        row = self._read_one(
             self.observation_database,
             "SELECT experiment_id, portfolio_id, strategy_version, config_hash "
             "FROM observation_experiment WHERE experiment_id = ?",
@@ -584,7 +591,10 @@ class StrategyReviewWorkflow:
             raise StrategyReviewError(
                 f"source observation experiment does not exist: {experiment['experimentId']}"
             )
-        actual = tuple(str(value) for value in row)
+        actual = tuple(
+            str(row[name])
+            for name in ("experiment_id", "portfolio_id", "strategy_version", "config_hash")
+        )
         expected = (
             experiment["experimentId"],
             experiment["portfolioId"],
@@ -594,8 +604,8 @@ class StrategyReviewWorkflow:
         if actual != expected:
             raise StrategyReviewError("source observation experiment identity mismatch")
 
-    @staticmethod
     def _require_absent_id(
+        self,
         database: Path,
         *,
         table: str,
@@ -604,9 +614,27 @@ class StrategyReviewWorkflow:
         label: str,
     ) -> None:
         # table/column are internal constants, never caller-controlled values.
-        row = _read_one(database, f"SELECT 1 FROM {table} WHERE {column} = ?", (value,))
+        row = self._read_one(
+            database,
+            f"SELECT 1 FROM {table} WHERE {column} = ?",
+            (value,),
+        )
         if row is not None:
             raise StrategyReviewError(f"{label} id already exists: {value}")
+
+    def _read_one(
+        self,
+        database: Path,
+        statement: str,
+        parameters: tuple[object, ...],
+    ) -> Any:
+        return _read_one(
+            database,
+            statement,
+            parameters,
+            database_url=self.database_url,
+            database_schema=self.database_schema,
+        )
 
 
 def _load_analysis(path: str | Path, analyses_root: Path) -> tuple[Path, dict[str, Any], str]:
@@ -971,7 +999,24 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _read_one(database: Path, statement: str, parameters: tuple[object, ...]) -> sqlite3.Row | None:
+def _read_one(
+    database: Path,
+    statement: str,
+    parameters: tuple[object, ...],
+    *,
+    database_url: str | None = None,
+    database_schema: str = "investment",
+) -> Any:
+    if database_url:
+        try:
+            with postgres_connection(
+                database_url,
+                database_schema,
+                read_only=True,
+            ) as connection:
+                return connection.execute(statement, parameters).fetchone()
+        except psycopg.Error as exc:
+            raise StrategyReviewError(f"read-only PostgreSQL verification failed: {exc}") from exc
     if database.is_symlink() or not database.is_file():
         raise StrategyReviewError(f"SQLite database does not exist: {database}")
     try:

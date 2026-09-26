@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     crypto_research_lifecycle_root: Path = Path("experiments/crypto-lifecycle")
     crypto_strategy_config_root: Path = Path("config/strategies")
     crypto_strategy_review_root: Path = Path("experiments/strategy-review")
+    database_url: str | None = None
+    database_schema: str = Field(default="investment", pattern=r"^[a-z_][a-z0-9_]{0,62}$")
     runtime_state_root: Path = Path("runtime/state")
     runtime_instance_id: str = "investment-engine-01"
     runtime_event_endpoint: str | None = None
@@ -82,6 +84,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "runtime_event_endpoint",
+        "database_url",
         "runtime_dynamic_paper_portfolio_id",
         "runtime_observation_experiment_id",
         "runtime_v28_paper_experiment_prefix",

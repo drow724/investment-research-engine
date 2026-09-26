@@ -21,11 +21,13 @@ data/paper/*
 data/observations/*
 data/backups/
 data/recovery/
+data/postgres/
 data/*.sqlite3
 models/
 artifacts/
 experiments/output/
 experiments/research/
+experiments/postgres/
 runtime/state/
 experiments/strategy-review/
 *.zip

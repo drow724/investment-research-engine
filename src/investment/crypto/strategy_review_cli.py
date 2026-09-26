@@ -88,6 +88,8 @@ def run_strategy_review_command(arguments: argparse.Namespace) -> None:
         review_root=settings.crypto_strategy_review_root,
         observation_database=settings.crypto_observation_database,
         paper_database=settings.crypto_paper_database,
+        database_url=settings.database_url,
+        database_schema=settings.database_schema,
     )
     action = str(arguments.strategy_review_action)
     if action == "analyze":
@@ -122,6 +124,8 @@ def run_strategy_review_command(arguments: argparse.Namespace) -> None:
             settings.crypto_observation_database,
             settings.crypto_paper_database,
             thresholds,
+            database_url=settings.database_url,
+            database_schema=settings.database_schema,
         ).analyze(
             experiment_id,
             portfolio_id=arguments.portfolio_id,

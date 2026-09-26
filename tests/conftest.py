@@ -11,6 +11,7 @@ from investment.core.data.point_in_time import PointInTimeDataset
 def isolate_runtime_from_local_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Tests must never initialize the developer's live Docker bind-mounted state."""
 
+    monkeypatch.setenv("INVESTMENT_DATABASE_URL", "")
     monkeypatch.setenv("INVESTMENT_CRYPTO_PAPER_DATABASE", str(tmp_path / "paper.sqlite3"))
     monkeypatch.setenv(
         "INVESTMENT_CRYPTO_OBSERVATION_DATABASE", str(tmp_path / "observation.sqlite3")

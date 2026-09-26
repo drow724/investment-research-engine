@@ -5,9 +5,8 @@ import json
 from investment.crypto.application.dynamic_paper_rebalance import dynamic_policy_for_version
 from investment.crypto.domain.timeframe import CandleTimeframe
 from investment.crypto.infrastructure.market_data import ParquetCryptoMarketDataProvider
-from investment.crypto.infrastructure.sqlite_accounting import SqlitePaperPortfolioRepository
-from investment.crypto.observation.repository import SqliteObservationRepository
 from investment.crypto.observation.service import FrozenObservationService
+from investment.database.factory import observation_repository, paper_repository
 from investment.interfaces.api.fastapi.settings import Settings
 
 
@@ -18,8 +17,16 @@ def run_observation_command(action: str) -> None:
     if experiment_id is None or portfolio_id is None:
         raise SystemExit("configure observation experiment ID and Paper portfolio ID first")
     service = FrozenObservationService(
-        SqliteObservationRepository(settings.crypto_observation_database),
-        SqlitePaperPortfolioRepository(settings.crypto_paper_database),
+        observation_repository(
+            settings.database_url,
+            settings.database_schema,
+            settings.crypto_observation_database,
+        ),
+        paper_repository(
+            settings.database_url,
+            settings.database_schema,
+            settings.crypto_paper_database,
+        ),
         ParquetCryptoMarketDataProvider(settings.crypto_price_root, CandleTimeframe.MINUTE_15),
         settings.runtime_state_root,
     )

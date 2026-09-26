@@ -48,6 +48,7 @@ from investment.crypto.infrastructure.universe_storage import UniverseSnapshotSt
 from investment.crypto.infrastructure.upbit import UpbitPublicClient
 from investment.crypto.ml.registry import CryptoModelRegistry
 from investment.crypto.universe.liquidity import PointInTimeLiquidityUniverse
+from investment.database.factory import paper_repository
 from investment.interfaces.api.fastapi.settings import Settings
 from investment.market_data.crypto.binance import (
     BinanceBitcoinPriceProvider,
@@ -183,7 +184,11 @@ def _paper_repository(
     repository = getattr(request.app.state, "paper_repository", None)
     if isinstance(repository, SqlitePaperPortfolioRepository):
         return repository
-    return SqlitePaperPortfolioRepository(settings.crypto_paper_database)
+    return paper_repository(
+        settings.database_url,
+        settings.database_schema,
+        settings.crypto_paper_database,
+    )
 
 
 def get_crypto_ml_service(settings: Settings = Depends(get_settings)) -> CryptoMLService:

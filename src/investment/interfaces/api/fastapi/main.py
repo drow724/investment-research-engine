@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import psycopg
 from fastapi import FastAPI
 
 from investment import __version__
@@ -24,7 +25,6 @@ from investment.crypto.application.universe_service import CryptoUniverseService
 from investment.crypto.derivatives.binance import BinanceIntradayDerivativesClient
 from investment.crypto.derivatives.crowding import BtcAlgorithmicCrowdingCalculator
 from investment.crypto.derivatives.overlay import PointInTimeBtcDerivativesOverlayProvider
-from investment.crypto.derivatives.repository import SqliteDerivativesObservationRepository
 from investment.crypto.derivatives.service import (
     BtcSqueezeBasisProxySignalCalculator,
     BtcSqueezeSignalCalculator,
@@ -36,18 +36,21 @@ from investment.crypto.domain.portfolio import PortfolioPurpose, TradingPortfoli
 from investment.crypto.domain.timeframe import CandleTimeframe
 from investment.crypto.infrastructure.market_data import ParquetCryptoMarketDataProvider
 from investment.crypto.infrastructure.paper_exchange import PaperExchangeGatewayFactory
-from investment.crypto.infrastructure.sqlite_accounting import SqlitePaperPortfolioRepository
 from investment.crypto.infrastructure.storage import (
     CryptoCandleParquetStorage,
     CryptoRawCandleStorage,
 )
 from investment.crypto.infrastructure.universe_storage import UniverseSnapshotStorage
 from investment.crypto.infrastructure.upbit import UpbitPublicClient
-from investment.crypto.observation.repository import SqliteObservationRepository
 from investment.crypto.observation.service import FrozenObservationService
 from investment.crypto.research.strategy_review import ReviewStage, StrategyReviewAnalyzer
 from investment.crypto.research.strategy_review_policy import thresholds_for_strategy_version
 from investment.crypto.strategy_review_workflow import StrategyReviewWorkflow
+from investment.database.factory import (
+    derivatives_repository,
+    observation_repository,
+    paper_repository,
+)
 from investment.interfaces.api.fastapi.crypto.backtest import routes as crypto_backtests
 from investment.interfaces.api.fastapi.crypto.market import routes as crypto_market
 from investment.interfaces.api.fastapi.crypto.ml import routes as crypto_ml
@@ -77,7 +80,11 @@ def create_app() -> FastAPI:
             request_timeout_seconds=5.0,
         )
         universe_storage = UniverseSnapshotStorage(settings.crypto_universe_root)
-        paper_repository = SqlitePaperPortfolioRepository(settings.crypto_paper_database)
+        paper_repository_store = paper_repository(
+            settings.database_url,
+            settings.database_schema,
+            settings.crypto_paper_database,
+        )
         policy = dynamic_policy_for_version(settings.runtime_dynamic_strategy_version)
         shadow_policy = None
         shadow_startup_error: str | None = None
@@ -96,8 +103,12 @@ def create_app() -> FastAPI:
             settings.runtime_observation_drain_experiment_ids_json
         )
         observation_service = FrozenObservationService(
-            SqliteObservationRepository(settings.crypto_observation_database),
-            paper_repository,
+            observation_repository(
+                settings.database_url,
+                settings.database_schema,
+                settings.crypto_observation_database,
+            ),
+            paper_repository_store,
             ParquetCryptoMarketDataProvider(settings.crypto_price_root, CandleTimeframe.MINUTE_15),
             settings.runtime_state_root,
             {
@@ -112,6 +123,8 @@ def create_app() -> FastAPI:
         strategy_review_analyzer = StrategyReviewAnalyzer(
             settings.crypto_observation_database,
             settings.crypto_paper_database,
+            database_url=settings.database_url,
+            database_schema=settings.database_schema,
         )
 
         def strategy_review_analyzer_for(
@@ -136,6 +149,8 @@ def create_app() -> FastAPI:
                 settings.crypto_observation_database,
                 settings.crypto_paper_database,
                 thresholds,
+                database_url=settings.database_url,
+                database_schema=settings.database_schema,
             )
 
         strategy_review_workflow = StrategyReviewWorkflow(
@@ -143,25 +158,29 @@ def create_app() -> FastAPI:
             review_root=settings.crypto_strategy_review_root,
             observation_database=settings.crypto_observation_database,
             paper_database=settings.crypto_paper_database,
+            database_url=settings.database_url,
+            database_schema=settings.database_schema,
         )
         derivatives_overlay_provider: PointInTimeBtcDerivativesOverlayProvider | None = None
         derivatives_observation_service: DerivativesObservationService | None = None
         derivatives_market_streams: DerivativesMarketStreams | None = None
         derivatives_startup_error: str | None = None
         try:
-            derivatives_repository = SqliteDerivativesObservationRepository(
-                settings.crypto_derivatives_database
+            derivatives_repository_store = derivatives_repository(
+                settings.database_url,
+                settings.database_schema,
+                settings.crypto_derivatives_database,
             )
             derivatives_overlay_provider = PointInTimeBtcDerivativesOverlayProvider(
-                derivatives_repository
+                derivatives_repository_store
             )
             derivatives_observation_service = DerivativesObservationService(
                 BinanceIntradayDerivativesClient(
                     base_url=settings.binance_futures_base_url,
-                    mark_price_provider=derivatives_repository.mark_price_known_at,
+                    mark_price_provider=derivatives_repository_store.mark_price_known_at,
                     official_basis_enabled=False,
                 ),
-                derivatives_repository,
+                derivatives_repository_store,
                 ParquetCryptoMarketDataProvider(
                     settings.crypto_price_root, CandleTimeframe.MINUTE_15
                 ),
@@ -171,7 +190,7 @@ def create_app() -> FastAPI:
             )
             derivatives_market_streams = (
                 DerivativesMarketStreams(
-                    derivatives_repository,
+                    derivatives_repository_store,
                     mark_price_url=settings.binance_mark_price_websocket_url,
                     binance_url=settings.binance_liquidation_websocket_url,
                     coinbase_url=settings.coinbase_market_websocket_url,
@@ -179,11 +198,11 @@ def create_app() -> FastAPI:
                 if settings.runtime_derivatives_websocket_enabled
                 else None
             )
-        except (OSError, ValueError, sqlite3.Error) as error:
+        except (OSError, ValueError, sqlite3.Error, psycopg.Error) as error:
             derivatives_startup_error = f"derivatives observation initialization failed: {error}"
             logger.exception(derivatives_startup_error)
         if settings.runtime_dynamic_paper_portfolio_id is not None:
-            paper_repository.create(
+                paper_repository_store.create(
                 TradingPortfolio(
                     settings.runtime_dynamic_paper_portfolio_id,
                     PortfolioPurpose.PAPER_TRADING,
@@ -213,7 +232,7 @@ def create_app() -> FastAPI:
                 assert shadow_portfolio_id is not None
                 assert shadow_experiment_id is not None
                 assert shadow_policy is not None
-                paper_repository.create(
+                paper_repository_store.create(
                     TradingPortfolio(
                         shadow_portfolio_id,
                         PortfolioPurpose.PAPER_TRADING,
@@ -226,7 +245,7 @@ def create_app() -> FastAPI:
                     shadow_portfolio_id,
                     shadow_policy,
                 )
-            except (KeyError, OSError, ValueError, sqlite3.Error) as error:
+            except (KeyError, OSError, ValueError, sqlite3.Error, psycopg.Error) as error:
                 shadow_lane_ready = False
                 shadow_startup_error = f"shadow lane initialization failed: {error}"
                 logger.exception(shadow_startup_error)
@@ -258,7 +277,7 @@ def create_app() -> FastAPI:
                 }:
                     raise ValueError("V2.8 experiment identity collides with another lane")
                 lane_policy = dynamic_policy_for_version(version)
-                paper_repository.create(
+                paper_repository_store.create(
                     TradingPortfolio(
                         portfolio_id,
                         PortfolioPurpose.PAPER_TRADING,
@@ -299,7 +318,7 @@ def create_app() -> FastAPI:
                 ):
                     raise ValueError("V2.9 experiment identity collides with another lane")
                 lane_policy = dynamic_policy_for_version(version)
-                paper_repository.create(
+                paper_repository_store.create(
                     TradingPortfolio(
                         portfolio_id,
                         PortfolioPurpose.PAPER_TRADING,
@@ -357,7 +376,7 @@ def create_app() -> FastAPI:
                 ParquetCryptoMarketDataProvider(
                     settings.crypto_price_root, CandleTimeframe.MINUTE_15
                 ),
-                paper_repository,
+                paper_repository_store,
                 PaperExchangeGatewayFactory(
                     fee_rate=lane_policy.exchange_fee_rate,
                     slippage_rate=(
@@ -463,7 +482,7 @@ def create_app() -> FastAPI:
                         review_stage=review_stage,
                     )
                     strategy_review_workflow.publish_analysis(report)
-                except (KeyError, OSError, ValueError, sqlite3.Error) as error:
+                except (KeyError, OSError, ValueError, sqlite3.Error, psycopg.Error) as error:
                     failures.append(f"{experiment_id}: {error}")
                     logger.exception("strategy review failed for %s", experiment_id)
             if failures:
@@ -554,7 +573,7 @@ def create_app() -> FastAPI:
             ),
         )
         app.state.autonomous_runtime = runtime
-        app.state.paper_repository = paper_repository
+        app.state.paper_repository = paper_repository_store
         app.state.observation_service = observation_service
         app.state.v28_paper_experiments = [lane[1] for lane in v28_lanes]
         app.state.v29_paper_experiments = [lane[1] for lane in v29_lanes]

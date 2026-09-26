@@ -1,4 +1,25 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-investment}
+      POSTGRES_USER: ${POSTGRES_USER:-investment_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-investment-local-only}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      # PostgreSQL owns this directory. Clients and research agents must connect
+      # through the server instead of reading these files directly.
+      - ${POSTGRES_DATA_PATH:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   investment-engine:
     build:
       context: .
@@ -6,6 +27,9 @@ services:
     image: investment-research-engine:local
     init: true
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
     ports:

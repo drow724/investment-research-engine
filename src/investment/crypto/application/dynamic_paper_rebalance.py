@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import numpy as np
+import psycopg
 
 from investment.core.domain.observation import require_utc
 from investment.crypto.derivatives.domain import (
@@ -656,7 +657,7 @@ class DynamicPaperRebalanceService:
                 crowding_feature_version=self.policy.crowding_feature_version,
                 crowding_maximum_age=self.policy.crowding_maximum_age,
             )
-        except (KeyError, OSError, ValueError, sqlite3.Error):
+        except (KeyError, OSError, ValueError, sqlite3.Error, psycopg.Error):
             # A local read failure remains explicit. SHADOW keeps the spot selection;
             # ENTRY_GATE later fails closed for entrants from this MISSING overlay.
             return BtcDerivativesDecisionOverlay(

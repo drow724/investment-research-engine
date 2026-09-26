@@ -21,6 +21,8 @@ from statistics import fmean, median
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
+from investment.database.postgres import PostgresConnectionAdapter, postgres_connection
+
 ReviewStage = Literal["PAPER", "SHADOW_TO_PAPER"]
 
 
@@ -201,6 +203,8 @@ class StrategyReviewAnalyzer:
         thresholds: StrategyReviewThresholds | None = None,
         *,
         busy_timeout_ms: int = 5_000,
+        database_url: str | None = None,
+        database_schema: str = "investment",
     ) -> None:
         if busy_timeout_ms < 0:
             raise ValueError("busy timeout cannot be negative")
@@ -208,6 +212,8 @@ class StrategyReviewAnalyzer:
         self.paper_database = Path(paper_database)
         self.thresholds = thresholds or StrategyReviewThresholds()
         self.busy_timeout_ms = busy_timeout_ms
+        self.database_url = database_url
+        self.database_schema = database_schema
 
     @property
     def _gate_policy_version(self) -> str:
@@ -282,7 +288,13 @@ class StrategyReviewAnalyzer:
             review_stage,
         )
 
-    def _connect_read_only(self, path: Path) -> sqlite3.Connection:
+    def _connect_read_only(self, path: Path) -> Any:
+        if self.database_url:
+            return postgres_connection(
+                self.database_url,
+                self.database_schema,
+                read_only=True,
+            )
         resolved = path.expanduser().resolve(strict=True)
         connection = sqlite3.connect(f"{resolved.as_uri()}?mode=ro", uri=True)
         connection.row_factory = sqlite3.Row
@@ -1960,6 +1972,13 @@ def _optional_datetime(value: object) -> datetime | None:
 def _table_has_column(connection: sqlite3.Connection, table: str, column: str) -> bool:
     """Check an additive observation-schema field without initializing a repository."""
 
+    if isinstance(connection, PostgresConnectionAdapter):
+        row = connection.execute(
+            """SELECT 1 FROM information_schema.columns
+               WHERE table_schema=%s AND table_name=%s AND column_name=%s""",
+            (connection.schema, table, column),
+        ).fetchone()
+        return row is not None
     rows = connection.execute(f"PRAGMA table_info({table})").fetchall()
     return any(str(row["name"]) == column for row in rows)
 
@@ -1967,6 +1986,13 @@ def _table_has_column(connection: sqlite3.Connection, table: str, column: str) -
 def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
     """Check an optional additive table in a read-only legacy database."""
 
+    if isinstance(connection, PostgresConnectionAdapter):
+        row = connection.execute(
+            """SELECT 1 FROM information_schema.tables
+               WHERE table_schema=%s AND table_name=%s""",
+            (connection.schema, table),
+        ).fetchone()
+        return row is not None
     row = connection.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
     ).fetchone()
